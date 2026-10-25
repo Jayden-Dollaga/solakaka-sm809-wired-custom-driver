@@ -91,6 +91,11 @@ python run_app.py
 
 PowerShell: `$env:SM809_WIRED_IDS="04f3:0270"`
 
+> **Note:** the wired-only unit seen so far is `04d9:a09f` (Holtek), which does
+> *not* use the Pro's protocol, so `SM809_WIRED_IDS` alone will not make it work.
+> Its framing is being worked out in `sm809wired/` (from the official installer);
+> check it on hardware with `python tools/probe_wired.py`.
+
 ---
 
 ## Getting Started

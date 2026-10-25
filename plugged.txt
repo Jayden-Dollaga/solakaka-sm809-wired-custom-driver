@@ -1,0 +1,45 @@
+
+=== 00ff:bacc  hanvonugee / ugee device ===
+  known as: bluetooth   command interface (usage_page 0x0A): NO (0 collection(s); status push needs 2)
+  - iface -1  usage_page=0x0001 usage=0x0002  \\?\HID#PenTablet&Col01#1&2d595ca7&2&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface -1  usage_page=0x0001 usage=0x0002  \\?\HID#PenTablet&Col02#1&2d595ca7&2&0001#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface -1  usage_page=0x000D usage=0x0001  \\?\HID#PenTablet&Col03#1&2d595ca7&2&0002#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface -1  usage_page=0x000D usage=0x0001  \\?\HID#PenTablet&Col04#1&2d595ca7&2&0003#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface -1  usage_page=0xFF00 usage=0x0001  \\?\HID#PenTablet&Col05#1&2d595ca7&2&0004#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface -1  usage_page=0x0001 usage=0x0002  \\?\HID#hid&Col01#1&1731f3ea&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface -1  usage_page=0x0001 usage=0x0002  \\?\HID#hid&Col01#1&4784345&1&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface -1  usage_page=0x0001 usage=0x0002  \\?\HID#hid&Col02#1&1731f3ea&0&0001#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface -1  usage_page=0x0001 usage=0x0002  \\?\HID#hid&Col02#1&4784345&1&0001#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface -1  usage_page=0x000D usage=0x0001  \\?\HID#hid&Col03#1&1731f3ea&0&0002#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface -1  usage_page=0x000D usage=0x0001  \\?\HID#hid&Col03#1&4784345&1&0002#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface -1  usage_page=0x000D usage=0x0001  \\?\HID#hid&Col04#1&1731f3ea&0&0003#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface -1  usage_page=0x000D usage=0x0001  \\?\HID#hid&Col04#1&4784345&1&0003#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface -1  usage_page=0xFF00 usage=0x0001  \\?\HID#hid&Col05#1&1731f3ea&0&0004#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface -1  usage_page=0xFF00 usage=0x0001  \\?\HID#hid&Col05#1&4784345&1&0004#{4d1e55b2-f16f-11cf-88cb-001111000030}
+
+=== 04d9:a09f  E-Signal / USB Gaming Mouse ===
+  known as: bluetooth   command interface (usage_page 0x0A): NO (0 collection(s); status push needs 2)
+  - iface 0  usage_page=0x0001 usage=0x0002  \\?\HID#VID_04D9&PID_A09F&MI_00#8&3526edbe&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface 1  usage_page=0x0001 usage=0x0006  \\?\HID#VID_04D9&PID_A09F&MI_01&Col01#8&114faffc&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}\KBD
+  - iface 1  usage_page=0x0001 usage=0x0080  \\?\HID#VID_04D9&PID_A09F&MI_01&Col02#8&114faffc&0&0001#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface 1  usage_page=0x000C usage=0x0001  \\?\HID#VID_04D9&PID_A09F&MI_01&Col03#8&114faffc&0&0002#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface 1  usage_page=0xFF01 usage=0xFF01  \\?\HID#VID_04D9&PID_A09F&MI_01&Col04#8&114faffc&0&0003#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface 2  usage_page=0xFF00 usage=0xFF00  \\?\HID#VID_04D9&PID_A09F&MI_02#8&29133c41&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}
+
+=== 258a:002a  SINO WEALTH / Gaming KB  ===
+  known as: bluetooth   command interface (usage_page 0x0A): NO (0 collection(s); status push needs 2)
+  - iface 0  usage_page=0x0001 usage=0x0006  \\?\HID#VID_258A&PID_002A&MI_00#8&29aa2d06&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}\KBD
+  - iface 1  usage_page=0x0001 usage=0x0080  \\?\HID#VID_258A&PID_002A&MI_01&Col01#8&11e6a0c1&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface 1  usage_page=0x000C usage=0x0001  \\?\HID#VID_258A&PID_002A&MI_01&Col02#8&11e6a0c1&0&0001#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface 1  usage_page=0xFF00 usage=0x0001  \\?\HID#VID_258A&PID_002A&MI_01&Col03#8&11e6a0c1&0&0002#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface 1  usage_page=0x0001 usage=0x0006  \\?\HID#VID_258A&PID_002A&MI_01&Col04#8&11e6a0c1&0&0003#{4d1e55b2-f16f-11cf-88cb-001111000030}\KBD
+  - iface 1  usage_page=0xFF00 usage=0x0001  \\?\HID#VID_258A&PID_002A&MI_01&Col05#8&11e6a0c1&0&0004#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface 1  usage_page=0xFF00 usage=0x0001  \\?\HID#VID_258A&PID_002A&MI_01&Col06#8&11e6a0c1&0&0005#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface 1  usage_page=0xFF00 usage=0x0001  \\?\HID#VID_258A&PID_002A&MI_01&Col07#8&11e6a0c1&0&0006#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface 1  usage_page=0x0001 usage=0x0002  \\?\HID#VID_258A&PID_002A&MI_01&Col08#8&11e6a0c1&0&0007#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  - iface 1  usage_page=0xFF00 usage=0x0001  \\?\HID#VID_258A&PID_002A&MI_01&Col09#8&11e6a0c1&0&0008#{4d1e55b2-f16f-11cf-88cb-001111000030}
+
+=== 3537:2106  Zikway / HID zkm ===
+  known as: bluetooth   command interface (usage_page 0x0A): NO (0 collection(s); status push needs 2)
+  - iface 0  usage_page=0xFF7A usage=0x0001  \\?\HID#VID_3537&PID_2106#7&642e135&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}
+
