@@ -181,6 +181,16 @@ check("2.4GHz + Bluetooth (read-only) -> prefers active Bluetooth over idle dong
 check("wired + Bluetooth + 2.4GHz -> prefers wired",
       choose_mode([m_wl, m_bt_cfg, m_wired])["connection"] == "wired")
 
+print("== wired-only VID:PID classification ==")
+check("parse_wired_ids handles hex, spaces, junk",
+      P.parse_wired_ids("04f3:0270, 0x1234:ABCD ,bad,:") == {(0x04F3, 0x0270), (0x1234, 0xABCD)})
+check("known wireless/wired PIDs classify as before",
+      P.connection_for(0x04F3, 0x026F) == "2.4GHz" and P.connection_for(0x04F3, 0x026E) == "wired")
+check("unknown PID defaults to bluetooth", P.connection_for(0x04F3, 0x0270) == "bluetooth")
+P.EXTRA_WIRED_IDS.add((0x04F3, 0x0270))
+check("extra wired id classifies as wired", P.connection_for(0x04F3, 0x0270) == "wired")
+P.EXTRA_WIRED_IDS.discard((0x04F3, 0x0270))
+
 print("== keepalive_poll health detection ==")
 d = fresh()
 class DummyDev:

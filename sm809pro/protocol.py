@@ -6,11 +6,49 @@ Everything here is CONFIRMED against the web driver, the official GamingMS.exe
 the packet builder, so it is trivially testable and portable.
 """
 
+import os
+
 # --- Identity ---------------------------------------------------------------
 VID = 0x04F3                 # Elan
 PID_WIRELESS = 0x026F        # 2.4GHz dongle
 PID_WIRED = 0x026E           # USB wired
 # (anything else on this VID = Bluetooth)
+
+
+def parse_wired_ids(text):
+    """Parse "04f3:0270, 1234:abcd" (hex, comma/space separated) -> {(vid, pid)}.
+    Malformed entries are skipped so a typo can never break startup."""
+    out = set()
+    for tok in (text or "").replace(";", ",").replace(" ", ",").split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        try:
+            v, p = tok.split(":")
+            out.add((int(v, 16), int(p, 16)))
+        except ValueError:
+            continue
+    return out
+
+
+# Wired-only SM809 units (no 2.4GHz/Bluetooth) may enumerate under a different
+# VID:PID than the Pro. List them (hex) in the SM809_WIRED_IDS environment
+# variable, e.g.  SM809_WIRED_IDS=04f3:0xxx  -- they are then treated as USB
+# wired instead of being mis-detected as Bluetooth. Find yours with
+# tools/probe_device.py.
+EXTRA_WIRED_IDS = parse_wired_ids(os.environ.get("SM809_WIRED_IDS", ""))
+
+
+def connection_for(vid, pid, target_vid=VID):
+    """Classify a (vid, pid) as "2.4GHz" / "wired" / "bluetooth"."""
+    if (vid, pid) in EXTRA_WIRED_IDS:
+        return "wired"
+    if vid == target_vid:
+        if pid == PID_WIRELESS:
+            return "2.4GHz"
+        if pid == PID_WIRED:
+            return "wired"
+    return "bluetooth"
 
 # --- Report IDs / framing ---------------------------------------------------
 REPORT_ID_CMD = 0x06          # SetFeature (write) + GetFeature (ACK/idle poll)

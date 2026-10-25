@@ -69,12 +69,7 @@ def detect_modes(vid=P.VID):
     seen = set()
 
     def classify(v, p):
-        if v == vid:
-            if p == P.PID_WIRELESS:
-                return "2.4GHz"
-            if p == P.PID_WIRED:
-                return "wired"
-        return "bluetooth"
+        return P.connection_for(v, p, vid)
 
     # Known PIDs first, then any other PID under the target VID (catches standard BT)
     all_devs = hid.enumerate(vid, 0)
@@ -95,6 +90,22 @@ def detect_modes(vid=P.VID):
             "configurable": _has_command_interface(devs),
             "devs": devs,
         })
+
+    # Wired-only units that use a VID:PID outside the known Pro set (see
+    # SM809_WIRED_IDS in protocol.py).
+    for v, p in sorted(P.EXTRA_WIRED_IDS):
+        if (v, p) in seen:
+            continue
+        seen.add((v, p))
+        devs = hid.enumerate(v, p)
+        if devs:
+            out.append({
+                "vid": v,
+                "pid": p,
+                "connection": classify(v, p),
+                "configurable": _has_command_interface(devs),
+                "devs": devs,
+            })
 
     # Also inspect global HID devices in case Bluetooth reports another VID with SM809/Solakaka
     try:
@@ -216,9 +227,7 @@ class SM809Pro:
                                configurable=self.configurable)
 
     def _open_devs(self, devs, pid, connection=None, configurable=True) -> bool:
-        self.connection = connection or (
-            "2.4GHz" if pid == P.PID_WIRELESS
-            else "wired" if pid == P.PID_WIRED else "bluetooth")
+        self.connection = connection or P.connection_for(self.vid, pid)
         self.configurable = configurable
         tgt = pick_control_interface(devs)
         self.interface_info = tgt

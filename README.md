@@ -73,6 +73,24 @@ Because the SM809 Pro's microcontroller is stateful and communicates over USB HI
   - **USB Wired** (USB-C Cable, VID `0x04F3`, PID `0x026E`)
   - *(Note: Bluetooth mode does not expose vendor HID configuration collections; use 2.4GHz or wired to configure settings).*
 
+### SM809 wired-only edition (non-Pro)
+
+If your wired-only SM809 shows up as "Bluetooth" or is not configurable, it
+probably uses a different VID:PID than the Pro. Run the read-only probe:
+
+```
+python tools/probe_device.py --read
+```
+
+then tell the driver to treat that ID as wired (hex VID:PID, comma-separated):
+
+```
+set SM809_WIRED_IDS=04f3:0270
+python run_app.py
+```
+
+PowerShell: `$env:SM809_WIRED_IDS="04f3:0270"`
+
 ---
 
 ## Getting Started
