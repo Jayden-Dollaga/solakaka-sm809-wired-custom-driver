@@ -16,6 +16,12 @@ What the official app does:
     + per-byte add/sub constants. encode()/decode() below were checked against
     the real scrambler routines (0x414710 / 0x414810) by CPU emulation on 3000
     random packets with random keys: 0 mismatches.
+
+Hardware observation (SM809 wired, 04d9:a09f): after sending query 0x83 the
+descrambled reply was `83 02 0F F2 40 00 00 00` -- the first byte echoes the
+command and byte 7 is 0, i.e. REPLIES DO NOT CARRY A VALID CHECKSUM (only the
+packets we send do). Byte 4 (0x40) equals the constant the official app writes
+back in its follow-up cmd 0x03 packet, which supports the key/format being right.
 """
 
 VID = 0x04D9
@@ -48,6 +54,11 @@ def build_packet(cmd: int, data: bytes = b"") -> bytes:
 
 def is_valid(packet: bytes) -> bool:
     return len(packet) == PACKET_LEN and packet[7] == checksum(packet[:7])
+
+
+def is_reply_to(cmd: int, reply: bytes) -> bool:
+    """Replies echo the command byte (observed: 0x83 -> 0x83). They have no checksum."""
+    return len(reply) == PACKET_LEN and reply[0] == (cmd & 0xFF)
 
 
 def key_from_password(password: str):

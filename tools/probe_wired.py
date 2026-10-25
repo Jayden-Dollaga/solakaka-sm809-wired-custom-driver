@@ -6,14 +6,19 @@ READS one feature report (no writes). Add --query to also send the same 8-byte
 query the official app sends before reading (cmd 0x83 -- from static analysis,
 not yet confirmed on hardware).
 
-It prints the raw bytes plus decoded versions (assuming the official scrambling
-with the shipped Data.ini password "FB1570", and assuming no scrambling) and
-whether each has a valid checksum. A valid checksum after decoding is strong
-evidence the framing is right (random data passes only 1 time in 256).
+It prints the raw bytes plus the descrambled version (using the shipped
+Data.ini password "FB1570"). Replies carry NO checksum; the signal that the
+framing is right is that the descrambled reply echoes the command byte (query
+0x83 -> reply starts with 0x83) and has sensible zero padding.
 
 Run:  python tools/probe_wired.py
       python tools/probe_wired.py --query
+      python tools/probe_wired.py --cmd 81               (send another read-style command, hex)
       python tools/probe_wired.py --password ABCDEF      (if your Data.ini differs)
+
+--cmd sends [cmd, 0*6, checksum] and reads one reply. Only 0x83 is known to be
+a read (it is what the official app sends); treat any other value as an
+experiment.
 """
 import argparse
 import os
@@ -41,22 +46,25 @@ def hx(b):
     return " ".join(f"{x:02X}" for x in b)
 
 
-def report(label, raw, key):
+def report(label, raw, key, cmd=None):
     print(f"\n{label}")
     print(f"  raw ({len(raw)} bytes): {hx(raw)}")
     wire = bytes(raw[-8:]) if len(raw) >= 8 else b""
     if len(wire) != 8:
         print("  (not 8 bytes, skipping decode)")
         return
-    print(f"  as plain    : valid checksum = {W.is_valid(wire)}")
     if key:
         dec = W.decode(wire, key)
-        print(f"  descrambled : {hx(dec)}   valid checksum = {W.is_valid(dec)}")
+        echo = "" if cmd is None else f"   echoes cmd {cmd:02X}: {W.is_reply_to(cmd, dec)}"
+        print(f"  descrambled : {hx(dec)}{echo}")
+    else:
+        print("  (no scrambling key, showing raw only)")
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--query", action="store_true", help="send the 0x83 query before reading")
+    ap.add_argument("--cmd", help="hex command byte to send instead of 0x83 (experimental)")
     ap.add_argument("--password", default="FB1570", help="Data.ini Password (6 chars enables scrambling)")
     args = ap.parse_args()
 
@@ -72,8 +80,10 @@ def main():
     h = hid.device()
     h.open_path(d["path"])
     try:
-        if args.query:
-            plain = W.build_packet(W.CMD_QUERY_83)
+        cmd = None
+        if args.query or args.cmd:
+            cmd = int(args.cmd, 16) if args.cmd else W.CMD_QUERY_83
+            plain = W.build_packet(cmd)
             wire = W.encode(plain, key) if key else plain
             print(f"\nSending query: plain {hx(plain)}  wire {hx(wire)}")
             h.send_feature_report(bytes([W.REPORT_ID]) + wire)
@@ -83,7 +93,7 @@ def main():
         except Exception as e:
             print(f"get_feature_report failed: {e}")
             return 2
-        report("Reply" if args.query else "Passive read", raw, key)
+        report("Reply" if cmd is not None else "Passive read", raw, key, cmd)
     finally:
         h.close()
     return 0
