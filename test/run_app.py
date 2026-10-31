@@ -2,7 +2,7 @@
 Launch the existing SM809 GUI with the WIRED prototype behind it.
 
     python test\run_app.py            # DRY RUN: GUI works, nothing is sent to the mouse
-    python test\run_app.py --apply    # really sends (polling rate + number of DPI levels only)
+    python test\run_app.py --apply    # really sends (polling rate + active DPI stage only)
 
 Close the official app and any other copy of this GUI first.
 
@@ -10,7 +10,7 @@ What it does: swaps the GUI's device layer for test/wired_adapter.py before the
 GUI starts. Your real config/ folder is NOT used -- profiles and macros for this
 launcher live in test/_gui_data/.
 
-Only polling rate and the number of DPI levels do anything; every other control is inert and the
+Only polling rate and the active DPI stage do anything; every other control is inert and the
 console log says so. Do not use the tray's "Start with Windows" toggle from here.
 """
 import os

@@ -51,9 +51,9 @@ def check(name, ok):
     failed += (not ok)
 
 
-# In that cycle the user had: polling 125 Hz (raw 08), 2 DPI levels, office mode,
+# In that cycle the user had: polling 125 Hz (raw 08), active DPI stage 2, office mode,
 # lighting mode 4 with a=03 b=FF.
-s = P.Settings(polling=125, dpi_levels=2, mode="office", light=(4, 0x03, 0xFF))
+s = P.Settings(polling=125, dpi_stage=2, mode="office", light=(4, 0x03, 0xFF))
 built = [(k, w.hex()) for k, w in P.wire_form(P.build_sequence(s))]
 check("same number of steps as the captured cycle", len(built) == len(CAPTURED_CYCLE))
 check("every step matches the capture byte-for-byte (G entries compare as empty)",
@@ -62,15 +62,15 @@ check("every step matches the capture byte-for-byte (G entries compare as empty)
 check("all command packets carry valid checksums once descrambled",
       all(W.is_valid(W.decode(bytes.fromhex(h), P.KEY)) for k, h in built if k == "F"))
 
-s2 = P.Settings(polling=500, dpi_levels=5, mode="game", light=(6, None, None))
+s2 = P.Settings(polling=500, dpi_stage=5, mode="game", light=(6, None, None))
 seq2 = P.build_sequence(s2)
 cmds = {p[0]: p for k, p in seq2 if k == "F"}
 check("polling 500 -> cmd 01 = 02", cmds[0x01][1] == 0x02)
-check("5 DPI levels -> cmd 0B = 05", cmds[0x0B][1] == 0x05)
+check("DPI stage 5 -> cmd 0B = 05", cmds[0x0B][1] == 0x05)
 check("game mode -> cmd 02 = 02", cmds[0x02][1] == 0x02)
 check("light 6 uses the app's default params 02 02", cmds[0x0D][1:4] == bytes([6, 2, 2]))
 
-for bad in (dict(polling=100), dict(dpi_levels=0), dict(dpi_levels=9), dict(mode="x"), dict(light=(12, None, None))):
+for bad in (dict(polling=100), dict(dpi_stage=0), dict(dpi_stage=9), dict(mode="x"), dict(light=(12, None, None))):
     try:
         P.Settings(**bad)
         check(f"rejects {bad}", False)
@@ -102,7 +102,7 @@ class FakeHid:
 P.time.sleep = lambda x: None          # do not actually wait in tests
 real_reply = W.build_packet(0x83, bytes([0x02, 0x0F, 0xFA, 0x40, 0x00, 0x00]))   # pretend a different device state
 fake = FakeHid(real_reply)
-P.push(fake, P.Settings(polling=1000, dpi_levels=3, mode="office", light=(5, None, None)), log=lambda *_: None)
+P.push(fake, P.Settings(polling=1000, dpi_stage=3, mode="office", light=(5, None, None)), log=lambda *_: None)
 fl = [e for e in fake.log if e[0] in ("F", "B")]
 check("fake device got 15 command packets and 11 blocks",
       sum(k == "F" for k, _ in fl) == 15 and sum(k == "B" for k, _ in fl) == 11)

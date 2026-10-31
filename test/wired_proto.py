@@ -9,14 +9,15 @@ byte-for-byte). Sending it to a real mouse is the experiment.
 Sequence per push (packet kinds: F = 8-byte scrambled feature report on
 interface 2, B = 32-byte plain output block, G = read the reply):
   F 83 query -> G reply -> F 03 (reply echoed) -> F 02 mode -> F 01 polling ->
-  F 0B dpi levels -> F 0C FF -> F 0D lighting -> F 10 00 18 + B -> F 10 01 18 + B ->
+  F 0B dpi stage -> F 0C FF -> F 0D lighting -> F 10 00 18 + B -> F 10 01 18 + B ->
   F 11 08 08 + B -> F 12 01..04 40 each followed by two B -> F 08 AA CC EE
 
 Fields verified by single-variable changes in the capture:
   01 = polling   08/04/02/01  (Hz labels 125/250/500/1000 come from the app code)
   02 = mode      01 office / 02 game  (capture + .pbin flag; game mode untested)
-  0B = number of DPI levels in use, 1..8 (NOT the active stage -- the mouse's own
-       DPI buttons pick the active one)
+  0B = ACTIVE DPI stage, 1..8. Evidence: the profile byte at +0x84 (0-based active stage)
+       is 1 in Profile14 and the app sent 0B 02; the profile's separate byte at +0x139
+       (the number of DPI codes, 8) is what goes into the `11 08 08` header instead.
   0D = lighting  mode 0..11, two parameter bytes
 Everything else (palettes, DPI table, button tables, 0C, 03) is replayed
 exactly as captured from Jayden's "Profile14" -- so a push also restores that
@@ -72,24 +73,24 @@ PACE_BLOCK = 0.016   # ~16 ms between 32-byte blocks
 
 
 class Settings:
-    def __init__(self, polling=1000, dpi_levels=2, mode="office", light=(0x01, 0x00, 0x00)):
+    def __init__(self, polling=1000, dpi_stage=2, mode="office", light=(0x01, 0x00, 0x00)):
         if polling not in POLLING_RAW:
             raise ValueError(f"polling must be one of {sorted(POLLING_RAW)}")
-        if not 1 <= dpi_levels <= 8:
-            raise ValueError("dpi_levels must be 1..8")
+        if not 1 <= dpi_stage <= 8:
+            raise ValueError("dpi_stage must be 1..8")
         if mode not in MODE_RAW:
             raise ValueError("mode must be office or game")
         lm, la, lb = light
         if not 0 <= lm <= 0x0B:
             raise ValueError("light mode must be 0..11")
         da, db = LIGHT_DEFAULTS[lm]
-        self.polling, self.dpi_levels, self.mode = polling, dpi_levels, mode
+        self.polling, self.dpi_stage, self.mode = polling, dpi_stage, mode
         self.light = (lm, da if la is None else la, db if lb is None else lb)
 
     def describe(self):
         lm, a, b = self.light
         return (f"polling {self.polling} Hz (raw {POLLING_RAW[self.polling]:02X}), "
-                f"DPI levels in use {self.dpi_levels}, mode {self.mode}, light {lm} (a={a:02X}, b={b:02X})")
+                f"DPI stage {self.dpi_stage}, mode {self.mode}, light {lm} (a={a:02X}, b={b:02X})")
 
 
 def build_sequence(s: Settings, reply: bytes = BASELINE_REPLY):
@@ -106,7 +107,7 @@ def build_sequence(s: Settings, reply: bytes = BASELINE_REPLY):
         f(0x03, *reply[1:4], 0x40, *reply[5:7]),
         f(0x02, MODE_RAW[s.mode]),
         f(0x01, POLLING_RAW[s.polling]),
-        f(0x0B, s.dpi_levels),
+        f(0x0B, s.dpi_stage),
         f(0x0C, 0xFF),
         f(0x0D, lm, la, lb),
         f(0x10, 0x00, 0x18), ("B", PALETTE_A),

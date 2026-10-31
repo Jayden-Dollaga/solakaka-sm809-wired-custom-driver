@@ -62,10 +62,13 @@ check("live: the 01 packet carries polling 500 -> 02", [p for p in polling if p[
 
 n = len(sent)
 check("same settings again -> skipped, nothing new sent", d.set_polling_rate(500) is True and len(d._h.sent) == n)
-d.set_dpi([800, 1600, 3200, 6000], selected=0)
+d.set_dpi([800, 1600, 3200, 6000], selected=3)
 b = [W.decode(x[1:], P.KEY) for k, x in d._h.sent[n:] if k == "F"]
-check("4 DPI values -> 4 DPI levels (cmd 0B = 04)", [p for p in b if p[0] == 0x0B][0][1] == 0x04)
-check("set_active_dpi is unsupported (the mouse picks the active level)", d.set_active_dpi([800], 0) is False)
+check("set_dpi selected index 3 -> active stage 4 (cmd 0B = 04)", [p for p in b if p[0] == 0x0B][0][1] == 0x04)
+n2 = len(d._h.sent)
+d.set_active_dpi([800, 1600], 0)
+b2 = [W.decode(x[1:], P.KEY) for k, x in d._h.sent[n2:] if k == "F"]
+check("set_active_dpi index 0 -> stage 1 (cmd 0B = 01)", [p for p in b2 if p[0] == 0x0B][0][1] == 0x01)
 
 n = len(d._h.sent)
 check("unsupported calls return False and send nothing",

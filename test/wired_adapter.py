@@ -7,8 +7,8 @@ keepalive_poll/set_*), so this class stands in for sm809pro.SM809Pro. Only what
 the capture of the official app proved is implemented:
 
   set_polling_rate(hz)           -> cmd 01 (125/250/500/1000)
-  set_dpi(levels, ...)           -> cmd 0B, sets the NUMBER of DPI levels in use (1..8)
-                                    from len(levels); the DPI *values* are ignored for now
+  set_active_dpi / set_dpi       -> cmd 0B, selects the ACTIVE DPI stage (selected index + 1);
+                                    the DPI *values* are ignored for now
 Everything else the GUI can ask for (lighting, LOD, power, sensor flags, buttons,
 macros, factory reset) returns False and sends nothing.
 
@@ -49,7 +49,7 @@ class SM809Wired:
         self.interface_info = None
         self._h = None
         self._lock = threading.RLock()
-        self.state = dict(polling=1000, dpi_levels=2, mode="office", light=(0x01, 0x00, 0x00))
+        self.state = dict(polling=1000, dpi_stage=2, mode="office", light=(0x01, 0x00, 0x00))
         self._last = None
 
     # -- connection -----------------------------------------------------------
@@ -120,11 +120,13 @@ class SM809Wired:
         self.state["polling"] = hz
         return self._push(f"set_polling_rate({hz})")
 
+    def set_active_dpi(self, dpi_levels, selected) -> bool:
+        self.state["dpi_stage"] = max(1, min(8, int(selected) + 1))
+        return self._push(f"set_active_dpi(stage {self.state['dpi_stage']})")
+
     def set_dpi(self, dpi_levels, selected=0, colors=None) -> bool:
-        n = max(1, min(8, len(dpi_levels)))
-        log("set_dpi: DPI values ignored for now; setting the number of DPI levels only")
-        self.state["dpi_levels"] = n
-        return self._push(f"set_dpi({n} levels)")
+        log("set_dpi: DPI values ignored for now; selecting the active stage only")
+        return self.set_active_dpi(dpi_levels, selected)
 
 
 def _unsupported(name):
@@ -136,7 +138,7 @@ def _unsupported(name):
 
 
 for _n in ("set_lod", "set_lighting", "set_power", "set_sensor_flags", "set_keys",
-           "set_active_dpi", "set_keys_default", "apply_macro_buttons", "upload_macro", "upload_macros",
+           "set_keys_default", "apply_macro_buttons", "upload_macro", "upload_macros",
            "erase_macros", "factory_reset", "factory_restore", "set_dpi_colors",
            "send_command", "send_raw"):
     setattr(SM809Wired, _n, _unsupported(_n))

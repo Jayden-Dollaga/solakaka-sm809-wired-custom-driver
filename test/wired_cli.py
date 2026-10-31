@@ -8,12 +8,12 @@ Examples
   python test/wired_cli.py read                      read-only 0x83 query
   python test/wired_cli.py set --polling 500         dry run
   python test/wired_cli.py set --polling 500 --apply
-  python test/wired_cli.py set --dpi-levels 3 --apply     (number of DPI levels in use, 1..8)
+  python test/wired_cli.py set --dpi-stage 3 --apply      (active DPI stage, 1..8)
   python test/wired_cli.py set --light 6 --apply
   python test/wired_cli.py set --mode game --apply   (button layout changes! use --mode office to go back)
 
 Every `set` is a FULL push like the official app does, so settings you do not
-pass fall back to: polling 1000, DPI levels 2, mode office, light 1 / Standard (params 00 00).
+pass fall back to: polling 1000, DPI stage 2, mode office, light 1 / Standard (params 00 00).
 It also rewrites the button tables, DPI table and light palettes with the ones
 captured from the official app (Profile14).
 Close the official app first.
@@ -50,7 +50,7 @@ def cmd_set(args):
     # default = the lighting in the user's own proxy log (Standard, params 00 00)
     light = (0x01, 0x00, 0x00) if args.light is None else (args.light, args.light_a, args.light_b)
     try:
-        s = P.Settings(polling=args.polling, dpi_levels=args.dpi_levels, mode=args.mode, light=light)
+        s = P.Settings(polling=args.polling, dpi_stage=args.dpi_stage, mode=args.mode, light=light)
     except ValueError as e:
         print(f"error: {e}")
         return 2
@@ -90,7 +90,7 @@ def main():
     sub.add_parser("read", help="send the 0x83 query and show the decoded reply (no config written)")
     st = sub.add_parser("set", help="build (and optionally send) a full push")
     st.add_argument("--polling", type=int, default=1000, help="125/250/500/1000")
-    st.add_argument("--dpi-levels", type=int, default=2, help="number of DPI levels in use, 1..8")
+    st.add_argument("--dpi-stage", type=int, default=2, help="active DPI stage, 1..8")
     st.add_argument("--mode", choices=["office", "game"], default="office")
     st.add_argument("--light", type=lambda x: int(x, 0), default=None, help="lighting mode 0..11")
     st.add_argument("--light-a", type=lambda x: int(x, 0), default=None, help="first parameter byte (default per mode)")
