@@ -43,9 +43,12 @@ class DeviceController(QObject):
     command_done = Signal(str, bool)
     busy_changed = Signal(bool)         # True while a queued command is running
 
-    def __init__(self, keepalive_interval=8.0, parent=None):
+    def __init__(self, keepalive_interval=8.0, parent=None, device_factory=None,
+                 status_factory=None, mode_detector=None):
         super().__init__(parent)
-        self._dev = SM809Pro()
+        self._dev = (device_factory or SM809Pro)()
+        self._status_factory = status_factory or StatusListener
+        self._mode_detector = mode_detector or detect_modes
         self._status = None
         self._q = queue.Queue()
         self._worker = None
@@ -152,7 +155,7 @@ class DeviceController(QObject):
                         pass
                     self._status = None
 
-                self._status = StatusListener(
+                self._status = self._status_factory(
                     on_change=self._on_status_push,
                     on_battery=lambda pct: self.battery_changed.emit(pct),
                     on_alive=self._on_alive_event,
@@ -186,7 +189,7 @@ class DeviceController(QObject):
             # If connected via 2.4GHz dongle, but mouse is reported offline (link==0):
             # check if mouse has connected via Bluetooth!
             if conn == "2.4GHz" and self._status and self._status._alive is False:
-                modes = detect_modes(self._dev.vid)
+                modes = self._mode_detector(self._dev.vid)
                 if any(m["connection"] == "bluetooth" for m in modes):
                     # Mouse switched to Bluetooth! Tear down 2.4GHz so next cycle connects BT
                     self._teardown_device()
@@ -196,7 +199,7 @@ class DeviceController(QObject):
             # 1. Check if wired USB cable was plugged in (wired takes priority)
             # 2. Check if device is still present in detect_modes()
             if conn == "bluetooth":
-                modes = detect_modes(self._dev.vid)
+                modes = self._mode_detector(self._dev.vid)
                 if any(m["connection"] == "wired" for m in modes):
                     # Wired cable attached! Switch to wired
                     self._teardown_device()

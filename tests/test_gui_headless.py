@@ -10,6 +10,7 @@ import os
 import sys
 import io
 import tempfile
+from typing import Any
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
@@ -20,6 +21,25 @@ from PySide6.QtWidgets import QApplication
 # Neutralize hardware access BEFORE building the window.
 from app import controller as _C
 _C.DeviceController.start = lambda self: None
+
+
+class _InjectedDevice:
+      def close(self):
+            pass
+
+
+_injected_device = _InjectedDevice()
+_factory_calls: list[bool] = []
+
+
+def _create_injected_device():
+      _factory_calls.append(True)
+      return _injected_device
+
+
+_injected_controller = _C.DeviceController(device_factory=_create_injected_device)
+assert _factory_calls == [True]
+_injected_controller.shutdown()
 
 # Isolate the profile store to a temp file so building MainWindow never writes
 # the real config/profiles.json (load() seeds + saves a Default on first run).
@@ -39,6 +59,47 @@ def check(name, cond):
     print(("PASS  " if cond else "FAIL  ") + name)
     if not cond:
         fails += 1
+
+
+from app.device_commands import DeviceCommandService
+
+class _RecordingController:
+      def __init__(self):
+            self.calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+      def call(self, *args: Any, **kwargs: Any) -> None:
+            self.calls.append((args, kwargs))
+
+
+_recording_controller = _RecordingController()
+_queued = _recording_controller.calls
+_commands = DeviceCommandService(_recording_controller)
+_config: dict[str, Any] = {
+      "dpi": {"values": [800, 1600], "selected": 1, "colors": [[1, 2, 3]]},
+      "polling_hz": 1000,
+      "lod_mm": 1,
+      "lighting": {"mode": 8, "color": [255, 0, 0]},
+      "power": {"sleep_min": 10, "move_wakeup": False, "move_lighting": True},
+      "sensor": {"angle_snap": True, "motion_sync": False, "ripple": True},
+      "buttons": ["binding"],
+}
+
+
+def _resolve_test_bindings(bindings: Any) -> tuple[list[str], dict[int, list[str]]]:
+      return ["codes"], {1: ["events"]}
+
+
+def _resolve_empty_bindings(bindings: Any) -> tuple[list[Any], dict[int, list[Any]]]:
+      return [], {}
+
+
+_commands.apply_config(None, _config, _resolve_test_bindings)
+check("profile service queues changed sections in stable order",
+      [call[0][0] for call in _queued] == [
+          "set_dpi", "set_polling_rate", "set_lod", "set_lighting",
+          "set_power", "set_sensor_flags", "apply_macro_buttons"])
+_commands.apply_config(_config, _config, _resolve_empty_bindings)
+check("profile service skips unchanged settings", len(_queued) == 7)
 
 
 def tmp_store():
@@ -646,15 +707,15 @@ check("TopBar 2.4G offline tooltip mentions offline", "mouse is offline" in w.to
 from app.controller import DeviceController
 from app import controller as _app_ctrl
 
-old_status_cls = _app_ctrl.StatusListener
 class MockStatusListener:
     _alive = True
     def __init__(self, *args, **kwargs): pass
     def start(self): pass
     def stop(self): pass
-_app_ctrl.StatusListener = MockStatusListener
 
-ctrl = DeviceController()
+detected_modes = []
+ctrl = DeviceController(status_factory=MockStatusListener,
+                                    mode_detector=lambda vid: detected_modes)
 connected_events = []
 disconnected_events = []
 ctrl.connected.connect(lambda info: connected_events.append(info))
@@ -699,19 +760,12 @@ mock_status = MockStatusListener()
 mock_status._alive = False
 ctrl._status = mock_status
 
-# Mock detect_modes to return Bluetooth
-from sm809pro import device as _dev_module
-orig_detect = _dev_module.detect_modes
-_dev_module.detect_modes = lambda vid=0x04F3: [{"connection": "bluetooth", "pid": 0x0270, "configurable": True, "devs": []}]
-_app_ctrl.detect_modes = _dev_module.detect_modes
+detected_modes[:] = [{"connection": "bluetooth", "pid": 0x0270,
+                      "configurable": True, "devs": []}]
 
 ctrl._last_mode_check = 0.0  # force mode check
 ctrl._maintain_connection()
 check("Mode switch tears down 2.4GHz when Bluetooth appears", ctrl._is_connected is False)
-
-_dev_module.detect_modes = orig_detect
-_app_ctrl.detect_modes = orig_detect
-_app_ctrl.StatusListener = old_status_cls
 
 ctrl.shutdown()
 dlg.close()

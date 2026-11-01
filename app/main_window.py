@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from . import theme
 from .controller import DeviceController
+from .device_commands import DeviceCommandService
 from sm809pro import actions as A
 from .panels.dpi_panel import DpiPanel
 from .panels.buttons_panel import ButtonsPanel
@@ -289,6 +290,7 @@ class MainWindow(QMainWindow):
 
         # ---- controller ----
         self.ctrl = DeviceController()
+        self.commands = DeviceCommandService(self.ctrl)
         self.ctrl.connected.connect(self._on_connected)
         self.ctrl.disconnected.connect(self.topbar.set_disconnected)
         self.ctrl.error.connect(self._on_error)
@@ -586,36 +588,7 @@ class MainWindow(QMainWindow):
         self._current_config = dict(config)
         self._seed_panels(config)              # always refresh the UI (cheap, no I/O)
 
-        def changed(section):
-            return old is None or old.get(section) != config.get(section)
-
-        # push to the device (guarded so a failed/absent device just no-ops)
-        if changed("dpi"):
-            dpi = config.get("dpi", {})
-            self.ctrl.call("set_dpi", dpi.get("values", []),
-                           selected=dpi.get("selected", 0), colors=dpi.get("colors"))
-        if changed("polling_hz"):
-            self.ctrl.call("set_polling_rate", config.get("polling_hz", 500))
-        if changed("lod_mm"):
-            self.ctrl.call("set_lod", config.get("lod_mm", 2))
-        if changed("lighting"):
-            light = config.get("lighting", {})
-            self.ctrl.call("set_lighting", light.get("mode", 2),
-                           color=tuple(light.get("color", (0, 0, 255))))
-        if changed("power"):
-            pw = config.get("power", {})
-            self.ctrl.call("set_power", sleep_time=pw.get("sleep_min", 20),
-                           move_wakeup=pw.get("move_wakeup", True),
-                           move_lighting=pw.get("move_lighting", True))
-        if changed("sensor"):
-            sn = config.get("sensor", {})
-            self.ctrl.call("set_sensor_flags", angle_snap=sn.get("angle_snap", False),
-                           motion_sync=sn.get("motion_sync", True),
-                           ripple=sn.get("ripple", False))
-        # buttons (+ any referenced macros) last
-        if changed("buttons"):
-            codes, macros = self._resolve_bindings(config.get("buttons", []))
-            self.ctrl.call("apply_macro_buttons", codes, macros)
+        self.commands.apply_config(old, config, self._resolve_bindings)
 
     def _seed_panels(self, config):
         """Set every panel from a config dict WITHOUT emitting apply signals."""
@@ -856,7 +829,7 @@ class MainWindow(QMainWindow):
 
     # -- actions --------------------------------------------------------------
     def _apply_dpi(self, dpi_values, colors, selected):
-        self.ctrl.call("set_dpi", dpi_values, selected=selected, colors=colors)
+        self.commands.set_dpi(dpi_values, selected=selected, colors=colors)
         self._update_config("dpi", {
             "values": list(dpi_values),
             "colors": [list(c) for c in colors],
@@ -867,7 +840,7 @@ class MainWindow(QMainWindow):
     def _apply_active_dpi(self, dpi_values, selected):
         # switch the live DPI stage: re-send the class-0x02 DPI config pair with
         # the new selected stage (confirmed by USB capture). No color write.
-        self.ctrl.call("set_active_dpi", dpi_values, selected)
+        self.commands.set_active_dpi(dpi_values, selected)
         if self._current_config is not None and not self._loading_profile:
             dpi = dict(self._current_config.get("dpi", {}))
             dpi["selected"] = selected
@@ -875,7 +848,7 @@ class MainWindow(QMainWindow):
 
     def _apply_buttons(self, bindings):
         codes, macros = self._resolve_bindings(bindings)
-        self.ctrl.call("apply_macro_buttons", codes, macros)
+        self.commands.apply_buttons(codes, macros)
         # persist the raw bindings (tuples and/or macro dicts) into the profile
         self._update_config("buttons", [list(b) if isinstance(b, tuple) else b
                                         for b in bindings])
@@ -935,27 +908,25 @@ class MainWindow(QMainWindow):
             self._apply_buttons(bindings)
 
     def _apply_lighting(self, mode, color):
-        self.ctrl.call("set_lighting", mode, color=color)
+        self.commands.set_lighting(mode, color)
         self._update_config("lighting", {"mode": mode, "color": list(color)})
 
     def _apply_polling(self, hz):
-        self.ctrl.call("set_polling_rate", hz)
+        self.commands.set_polling_rate(hz)
         self._update_config("polling_hz", hz)
 
     def _apply_lod(self, mm):
-        self.ctrl.call("set_lod", mm)
+        self.commands.set_lod(mm)
         self._update_config("lod_mm", mm)
 
     def _apply_power(self, sleep_min, move_wakeup, move_lighting):
-        self.ctrl.call("set_power", sleep_time=sleep_min,
-                       move_wakeup=move_wakeup, move_lighting=move_lighting)
+        self.commands.set_power(sleep_min, move_wakeup, move_lighting)
         self._update_config("power", {"sleep_min": sleep_min,
                                       "move_wakeup": move_wakeup,
                                       "move_lighting": move_lighting})
 
     def _apply_sensor(self, angle_snap, motion_sync, ripple):
-        self.ctrl.call("set_sensor_flags", angle_snap=angle_snap,
-                       motion_sync=motion_sync, ripple=ripple)
+        self.commands.set_sensor_flags(angle_snap, motion_sync, ripple)
         self._update_config("sensor", {"angle_snap": angle_snap,
                                        "motion_sync": motion_sync,
                                        "ripple": ripple})
@@ -972,7 +943,7 @@ class MainWindow(QMainWindow):
         box.setStandardButtons(QMessageBox.Yes | QMessageBox.Cancel)
         box.setDefaultButton(QMessageBox.Cancel)
         if box.exec() == QMessageBox.Yes:
-            self.ctrl.call("factory_reset")   # single 0x0F, matches the official Restore exactly
+            self.commands.factory_reset()   # single 0x0F, matches the official Restore exactly
             # reflect the restored defaults across all panels AND fold them into
             # the active profile so the reset persists (bindings reset to factory).
             cfg = default_config()
