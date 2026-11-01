@@ -25,12 +25,15 @@ from PySide6.QtCore import QObject, Signal
 from sm809pro import SM809Pro
 from sm809pro.device import detect_modes
 from sm809pro.status import StatusListener
+from sm809wired.device import find_interface as find_wired_interface
 
 
 class DeviceController(QObject):
     # lifecycle
     connected = Signal(dict)        # {connection, product, configurable} on success
     disconnected = Signal()
+    wired_only_detected = Signal(dict)
+    wired_only_disconnected = Signal()
     error = Signal(str)
     # live device push (from status interface)
     dpi_level_changed = Signal(int)     # current DPI stage index changed
@@ -44,11 +47,13 @@ class DeviceController(QObject):
     busy_changed = Signal(bool)         # True while a queued command is running
 
     def __init__(self, keepalive_interval=8.0, parent=None, device_factory=None,
-                 status_factory=None, mode_detector=None):
+                 status_factory=None, mode_detector=None, wired_detector=None):
         super().__init__(parent)
         self._dev = (device_factory or SM809Pro)()
         self._status_factory = status_factory or StatusListener
         self._mode_detector = mode_detector or detect_modes
+        self._wired_detector = wired_detector or find_wired_interface
+        self._wired_only_present = False
         self._status = None
         self._q = queue.Queue()
         self._worker = None
@@ -92,6 +97,7 @@ class DeviceController(QObject):
             if not self._is_connected or not self._dev.is_open:
                 self._attempt_connect()
                 if not self._is_connected:
+                    self._check_wired_only_presence()
                     # Still disconnected: drain any queued calls so callers don't hang
                     self._drain_queue()
                     # Wait 1.5s before next polling attempt
@@ -140,6 +146,9 @@ class DeviceController(QObject):
 
             if ok:
                 self._is_connected = True
+                if self._wired_only_present:
+                    self._wired_only_present = False
+                    self.wired_only_disconnected.emit()
                 info = {
                     "connection": self._dev.connection,
                     "product": (self._dev.interface_info or {}).get("product_string", "SM809 Pro"),
@@ -167,6 +176,24 @@ class DeviceController(QObject):
                 self._status.start()
                 self._last_keepalive = time.time()
                 self._last_mode_check = time.time()
+
+    def _check_wired_only_presence(self):
+        try:
+            interface = self._wired_detector()
+        except Exception:
+            interface = None
+        if interface:
+            if not self._wired_only_present:
+                self._wired_only_present = True
+                self.wired_only_detected.emit({
+                    "connection": "wired-only",
+                    "product": interface.get("product_string") or "Wired-only SM809",
+                    "vid": interface.get("vendor_id"),
+                    "pid": interface.get("product_id"),
+                })
+        elif self._wired_only_present:
+            self._wired_only_present = False
+            self.wired_only_disconnected.emit()
 
     def _maintain_connection(self):
         now = time.time()

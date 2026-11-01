@@ -78,13 +78,13 @@ Because the SM809 Pro's microcontroller is stateful and communicates over USB HI
 If your wired-only SM809 shows up as "Bluetooth" or is not configurable, it
 probably uses a different VID:PID than the Pro. Run the read-only probe:
 
-```
+```console
 python tools/probe_device.py --read
 ```
 
 then tell the driver to treat that ID as wired (hex VID:PID, comma-separated):
 
-```
+```bat
 set SM809_WIRED_IDS=04f3:0270
 python run_app.py
 ```
@@ -93,8 +93,20 @@ PowerShell: `$env:SM809_WIRED_IDS="04f3:0270"`
 
 > **Note:** the wired-only unit seen so far is `04d9:a09f` (Holtek), which does
 > *not* use the Pro's protocol, so `SM809_WIRED_IDS` alone will not make it work.
-> Its framing is being worked out in `sm809wired/` (from the official installer);
-> check it on hardware with `python tools/probe_wired.py`.
+> When this device is detected, the app opens **Wired Profiles** and disables
+> the incompatible Pro setting tabs. The wired workflow applies a complete
+> official profile. The editor supports Office/Game mode, polling rate, active
+> DPI stage and values, lighting parameters, and supported actions in editable
+> button slots. Macro actions and settings without verified wired packet support
+> remain unavailable. The page accepts an exported `.pbin` or official
+> `Data/profile.bin` plus its matching `Data.ini`, then shows a dry-run packet
+> preview. Applying sends the entire selected profile, including button tables,
+> DPI data, and lighting palettes; it requires a separate confirmation and is
+> validated only once with the extracted factory profile on one `04d9:a09f`
+> unit; a post-apply `0x83` query echoed successfully. Other profiles and
+> setting readback remain unverified. Only `04d9:a09f` `Data.ini` files are accepted.
+> Unsupported macro actions block the preview. Use `python tools/probe_wired.py`
+> for read-only hardware inspection.
 
 ---
 
@@ -104,6 +116,7 @@ PowerShell: `$env:SM809_WIRED_IDS="04f3:0270"`
 
 - Python 3.10+ (tested on Windows)
 - Required packages:
+
   ```bash
   pip install PySide6 hidapi
   ```
@@ -119,10 +132,14 @@ python run_app.py
 Run the test suite offline (no mouse hardware required):
 
 ```bash
-# Offline framing and protocol encoding tests (37 tests)
+# Pro protocol tests (53 checks)
 python tests/test_offline.py
 
-# Headless GUI, profile store, .psf import, and auto-switch tests
+# Wired-only apply engine and protocol tests (26 + 7 checks)
+python tests/test_wired_engine.py
+python tests/test_wired_protocol.py
+
+# Headless GUI, profile store, wired preview, .psf import, and auto-switch tests
 python tests/test_gui_headless.py
 ```
 
@@ -145,7 +162,7 @@ The output will be placed in `dist\SM809Pro.exe`. It runs portably and stores us
 
 ## Project Structure
 
-```
+```text
 SM809ProApp/
 ├── sm809pro/             # Core driver package (reverse-engineered protocol & HID I/O)
 │   ├── protocol.py       # HID packet definitions, report IDs, command opcodes, checksums
@@ -156,12 +173,14 @@ SM809ProApp/
 │   └── defaults.py       # Single source of truth for factory default configuration
 ├── app/                  # PySide6 GUI and automation engine
 │   ├── controller.py     # Background device controller thread with Qt signals
+│   ├── device_commands.py # Application settings to device-command translation
+│   ├── window_shell.py   # Root layout, navigation rail, and page stack
 │   ├── main_window.py    # Main window shell, navigation rail, and system tray logic
 │   ├── autoswitch.py     # Foreground window monitor and profile auto-switch rules
 │   ├── profile_store.py  # JSON profile serializer and persistence manager
 │   ├── psf_import.py     # Parser for official OEM .psf profiles
 │   ├── theme.py          # Dark stylesheet styling ("Precision Instrument" theme)
-│   ├── panels/           # UI panels (Buttons, Macros, DPI, Lighting, Performance, Auto-Switch, Profiles)
+│   ├── panels/           # UI panels, including separate wired-only profile preview/apply
 │   └── widgets/          # Reusable UI components (Action picker, color selector, overlay HUD)
 ├── config/               # Default profile and macro configurations (profiles.json, macros.json)
 ├── tests/                # Automated offline and offscreen headless test suites

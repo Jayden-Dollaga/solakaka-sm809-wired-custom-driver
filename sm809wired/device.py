@@ -6,7 +6,9 @@ usage_page 0xFF00 / usage 0xFF00 interface; the 32-byte blocks are 33-byte outpu
 writes (report ID 0 + 32). Pacing follows the official app (about 32 ms after a command
 packet, 16 ms between blocks).
 
-NOT yet tested on real hardware. push() stops at the first problem and never retries.
+One factory-profile apply completed on one 04d9:a09f unit, and a post-apply 0x83
+query echoed. Other profiles and setting readback remain unverified. push() stops
+at the first problem and never retries.
 """
 import time
 
@@ -17,15 +19,25 @@ PACE_CMD = 0.032
 PACE_BLOCK = 0.016
 
 
-def open_interface():
-    import hid
+def find_interface():
+    """Return the wired-only command-interface descriptor without opening it."""
+    try:
+        import hid
+    except Exception:
+        return None
     cands = [d for d in hid.enumerate(W.VID, W.PID)
              if d.get("usage_page") == W.USAGE_PAGE and d.get("usage") == W.USAGE]
-    if not cands:
+    return cands[0] if cands else None
+
+
+def open_interface():
+    import hid
+    interface = find_interface()
+    if interface is None:
         raise RuntimeError("04d9:a09f interface 0xFF00/0xFF00 not found "
                            "(plug in directly and close the official app)")
     h = hid.device()
-    h.open_path(cands[0]["path"])
+    h.open_path(interface["path"])
     return h
 
 

@@ -2,8 +2,9 @@
 sm809wired.protocol -- wire framing for the wired-only SM809 (Holtek 04D9:A09F).
 
 SOURCE: static analysis of the official "SM809 mouse Software" installer
-(MSDriver.dll + the app's packet builders). Nothing here has been confirmed on
-real hardware yet -- see tools/probe_wired.py for the first hardware check.
+(MSDriver.dll + the app's packet builders). Hardware testing is limited to one
+factory-profile apply on one 04D9:A09F unit and a successful post-apply 0x83
+echo; broader setting readback remains unverified.
 
 What the official app does:
   * Talks over HID *feature reports* on the vendor interface whose
@@ -17,11 +18,12 @@ What the official app does:
     the real scrambler routines (0x414710 / 0x414810) by CPU emulation on 3000
     random packets with random keys: 0 mismatches.
 
-Hardware observation (SM809 wired, 04d9:a09f): after sending query 0x83 the
-descrambled reply was `83 02 0F F2 40 00 00 00` -- the first byte echoes the
-command and byte 7 is 0, i.e. REPLIES DO NOT CARRY A VALID CHECKSUM (only the
-packets we send do). Byte 4 (0x40) equals the constant the official app writes
-back in its follow-up cmd 0x03 packet, which supports the key/format being right.
+Hardware observation (one SM809 wired, 04d9:a09f): the apply query returned
+`83 02 0F F2 00 00 00 00`; a separate post-apply query returned
+`83 02 0F F2 40 00 00 00`. Both echo 0x83 and have byte 7 = 0, so replies do
+not carry a valid checksum. Byte 4 (0x40) matches the value the official app
+writes back in its follow-up 0x03 packet. This is limited framing/transport
+evidence, not a readback of the applied settings.
 """
 
 VID = 0x04D9

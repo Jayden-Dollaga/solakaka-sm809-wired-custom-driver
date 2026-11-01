@@ -16,7 +16,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 # Neutralize hardware access BEFORE building the window.
 from app import controller as _C
@@ -117,10 +117,92 @@ from sm809pro import actions as A
 
 w = MainWindow()
 check("MainWindow builds", w is not None)
-check("nav has 7 items", w.nav.count() == 7)
+check("MainWindow delegates composition to AppShell", w.centralWidget() is w.shell)
+check("nav has 8 items", w.nav.count() == 8)
 check("macro panel at stack index 1", w.stack.widget(1) is w.macro_panel)
+check("wired profile panel at stack index 7", w.stack.widget(7) is w.wired_panel)
 check("apply/resolve handlers exist",
       hasattr(w, "_apply_buttons") and hasattr(w, "_resolve_bindings"))
+_repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_factory_pbin = os.path.join(_repo_root, "original_extracted", "Data", "Default.pbin")
+check("wired factory profile loads with matching Data.ini",
+      w.wired_panel.load_profile_file(_factory_pbin)
+      and w.wired_panel.profile_combo.count() == 1
+      and w.wired_panel.apply_btn.isEnabled())
+check("wired preview is dry-run and includes full apply sequence",
+      "DRY RUN" in w.wired_panel.preview.toPlainText()
+      and "0B" in w.wired_panel.preview.toPlainText())
+_wired_panel = w.wired_panel
+_wired_panel.mode_combo.setCurrentIndex(_wired_panel.mode_combo.findData(True))
+_wired_panel.polling_combo.setCurrentIndex(_wired_panel.polling_combo.findData(0))
+_wired_panel.dpi_spins[0].setValue(1600)
+_wired_panel._button_combos[0].setCurrentIndex(
+    _wired_panel._button_combos[0].findData(0x04))
+_edited_wired_profile = _wired_panel._profiles[0]
+check("wired editor updates mode, polling, DPI, and button action",
+      _edited_wired_profile.game_mode
+      and _edited_wired_profile.polling_index == 0
+      and _edited_wired_profile.dpi_values[0] == 32
+      and _edited_wired_profile.slots[0].action == 0x04
+      and "Mode: Game" in _wired_panel.preview.toPlainText())
+_wired_panel.load_profile_file(_factory_pbin)
+
+from PySide6.QtCore import QEventLoop, QTimer
+from sm809wired import device as _wired_device
+
+
+class _FakeWiredHandle:
+      def __init__(self):
+            self.closed = False
+
+      def close(self):
+            self.closed = True
+
+
+_fake_wired_handle = _FakeWiredHandle()
+_original_open_wired: Any = getattr(_wired_device, "open_interface")
+_original_push_wired: Any = getattr(_wired_device, "push_profile")
+_original_message_exec: Any = QMessageBox.exec
+
+
+def _fake_open_wired() -> _FakeWiredHandle:
+      return _fake_wired_handle
+
+
+def _fake_push_wired(handle: Any, profile: Any, button_ini: Any,
+                               key: Any, log: Any) -> None:
+      log("fake transfer completed")
+
+
+def _accept_confirmation(self: QMessageBox) -> QMessageBox.StandardButton:
+      return QMessageBox.StandardButton.Yes
+
+
+setattr(_wired_device, "open_interface", _fake_open_wired)
+setattr(_wired_device, "push_profile", _fake_push_wired)
+QMessageBox.exec = _accept_confirmation
+_wired_loop = QEventLoop()
+_wired_timer = QTimer()
+
+
+def _finish_wired_apply():
+      if w.wired_panel.status.text().startswith(("Profile applied.", "Apply failed:")):
+            _wired_timer.stop()
+            _wired_loop.quit()
+
+
+_wired_timer.timeout.connect(_finish_wired_apply)
+_wired_timer.start(10)
+QTimer.singleShot(5000, _wired_loop.quit)
+w.wired_panel.apply_btn.click()
+_wired_loop.exec()
+check("wired apply worker reports success and closes its handle",
+        w.wired_panel.status.text() == "Profile applied. fake transfer completed"
+        and _fake_wired_handle.closed)
+_wired_timer.stop()
+setattr(_wired_device, "open_interface", _original_open_wired)
+setattr(_wired_device, "push_profile", _original_push_wired)
+QMessageBox.exec = _original_message_exec
 
 # 2) named-library macro model (isolated temp store)
 from app.panels.macro_panel import MacroPanel
@@ -409,7 +491,7 @@ check("path distinguishes same exe (miss)",
               "client-win64-shipping.exe", "", "D:/Steam/GameB/client-win64-shipping.exe"))
 
 # Auto-Switch panel is wired into the nav + stack
-check("nav has 7 items (Auto-Switch + Profiles)", w3.nav.count() == 7)
+check("nav has 8 items (Auto-Switch + Profiles + Wired)", w3.nav.count() == 8)
 check("auto-switch panel at stack index 5", w3.stack.widget(5) is w3.autoswitch_panel)
 w3.autoswitch_panel.set_profiles(w3.profiles.all(), game["id"])
 check("panel lists all profiles", w3.autoswitch_panel.profile_combo.count() == len(w3.profiles.all()))
@@ -713,13 +795,51 @@ class MockStatusListener:
     def start(self): pass
     def stop(self): pass
 
-detected_modes = []
+detected_modes: list[dict[str, Any]] = []
+wired_interfaces: list[dict[str, Any] | None] = [{
+      "vendor_id": 0x04D9,
+      "product_id": 0xA09F,
+      "product_string": "USB Gaming Mouse",
+}]
+
+
+def _detect_pro_modes(vid: int) -> list[dict[str, Any]]:
+      return detected_modes
+
+
+def _detect_wired_interface() -> dict[str, Any] | None:
+      return wired_interfaces[0]
+
+
 ctrl = DeviceController(status_factory=MockStatusListener,
-                                    mode_detector=lambda vid: detected_modes)
-connected_events = []
-disconnected_events = []
-ctrl.connected.connect(lambda info: connected_events.append(info))
-ctrl.disconnected.connect(lambda: disconnected_events.append(True))
+                                     mode_detector=_detect_pro_modes,
+                                     wired_detector=_detect_wired_interface)
+connected_events: list[dict[str, Any]] = []
+disconnected_events: list[bool] = []
+wired_detected_events: list[dict[str, Any]] = []
+wired_disconnected_events: list[bool] = []
+
+
+def _record_connected(info: dict[str, Any]) -> None:
+      connected_events.append(info)
+
+
+def _record_disconnected() -> None:
+      disconnected_events.append(True)
+
+
+def _record_wired_detected(info: dict[str, Any]) -> None:
+      wired_detected_events.append(info)
+
+
+def _record_wired_disconnected() -> None:
+      wired_disconnected_events.append(True)
+
+
+ctrl.connected.connect(_record_connected)
+ctrl.disconnected.connect(_record_disconnected)
+ctrl.wired_only_detected.connect(_record_wired_detected)
+ctrl.wired_only_disconnected.connect(_record_wired_disconnected)
 
 # 1. Test connect attempt when device is available
 ctrl._dev._dev = object()
@@ -750,7 +870,18 @@ ctrl._drain_queue()
 check("Drained queue emits command_done with False", done_events == [("set_dpi", False)])
 check("Busy is False after draining", ctrl._q.empty())
 
-# 4. Test mode-switching: 2.4GHz offline -> Bluetooth available triggers switch
+# 4. A non-Pro wired-only mouse is reported once, then cleared on removal.
+ctrl._check_wired_only_presence()
+ctrl._check_wired_only_presence()
+check("wired-only detection emits once with device identity",
+      len(wired_detected_events) == 1
+      and wired_detected_events[0]["vid"] == 0x04D9
+      and wired_detected_events[0]["pid"] == 0xA09F)
+wired_interfaces[0] = None
+ctrl._check_wired_only_presence()
+check("wired-only removal emits disconnect", wired_disconnected_events == [True])
+
+# 5. Test mode-switching: 2.4GHz offline -> Bluetooth available triggers switch
 ctrl._dev.open = lambda: True
 ctrl._dev.connection = "2.4GHz"
 ctrl._dev._dev = object()
@@ -766,6 +897,16 @@ detected_modes[:] = [{"connection": "bluetooth", "pid": 0x0270,
 ctrl._last_mode_check = 0.0  # force mode check
 ctrl._maintain_connection()
 check("Mode switch tears down 2.4GHz when Bluetooth appears", ctrl._is_connected is False)
+
+w._on_wired_only_detected({"vid": 0x04D9, "pid": 0xA09F, "product": "USB Gaming Mouse"})
+check("wired-only detection routes to Wired Profiles",
+      w.nav.currentRow() == 7 and w.topbar.conn_pill.text() == "● wired-only SM809")
+check("Pro controls are disabled while wired-only mouse is active",
+      not w.buttons_panel.isEnabled() and not w.dpi_panel.isEnabled()
+      and w.wired_panel.isEnabled())
+w._on_wired_only_disconnected()
+check("Pro controls re-enable after wired-only removal",
+      w.buttons_panel.isEnabled() and w.dpi_panel.isEnabled())
 
 ctrl.shutdown()
 dlg.close()

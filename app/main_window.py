@@ -12,9 +12,8 @@ Nav order (user-chosen): Buttons, Macro, DPI, Lighting, Performance.
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QIcon, QPixmap, QPainter, QColor, QGuiApplication
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QListWidget,
-    QListWidgetItem, QStackedWidget, QFrame, QLabel, QPushButton, QMessageBox,
-    QSizePolicy, QAbstractItemView, QComboBox, QInputDialog, QMenu,
+    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFrame, QLabel, QPushButton,
+    QMessageBox, QComboBox, QInputDialog, QMenu,
     QFileDialog, QSystemTrayIcon, QDialog, QCheckBox, QSlider, QDialogButtonBox,
     QGroupBox,
 )
@@ -22,6 +21,7 @@ from PySide6.QtWidgets import (
 from . import theme
 from .controller import DeviceController
 from .device_commands import DeviceCommandService
+from .window_shell import AppShell
 from sm809pro import actions as A
 from .panels.dpi_panel import DpiPanel
 from .panels.buttons_panel import ButtonsPanel
@@ -39,7 +39,8 @@ from .widgets.action_picker import set_macro_resolver
 
 # nav order requested by the user
 NAV_ITEMS = ["Buttons", "Macro", "DPI", "Lighting", "Performance", "Auto-Switch",
-             "Profiles"]
+             "Profiles", "Wired Profiles"]
+from .panels.wired_profile_panel import WiredProfilePanel
 
 
 def app_icon():
@@ -154,6 +155,17 @@ class TopBar(QFrame):
         self.dpi_readout.setText("—")
         self.rate_readout.setText("—")
 
+    def set_wired_only(self, info):
+        self.conn_pill.setText("● wired-only SM809")
+        self.conn_pill.setStyleSheet(self._conn_style(theme.WARN))
+        self.conn_pill.setToolTip(
+            f"Detected {info.get('vid', 0x04D9):04X}:{info.get('pid', 0xA09F):04X}. "
+            "This mouse uses a separate protocol; Pro settings do not apply. Use Wired Profiles."
+        )
+        self.battery.setText("")
+        self.dpi_readout.setText("—")
+        self.rate_readout.setText("—")
+
     def set_error(self, msg):
         self.conn_pill.setText("● not connected")
         self.conn_pill.setStyleSheet(self._conn_style(theme.BAD))
@@ -199,76 +211,11 @@ class MainWindow(QMainWindow):
         self.resize(1000, 680)
         self.setMinimumSize(820, 560)
 
-        root = QWidget()
-        root.setObjectName("root")
-        self.setCentralWidget(root)
-        outer = QVBoxLayout(root)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
         # profile store (host-side source of truth; makes bindings persist)
         self.profiles = ProfileStore()
         self._current_config = None
         self._loading_profile = False
         self._profile_mru = []      # recently-active profile ids (most-recent first)
-
-        self.topbar = TopBar()
-        outer.addWidget(self.topbar)
-
-        body = QHBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(0)
-        outer.addLayout(body, 1)
-
-        # ---- left rail: full-height surface; nav at top, reset near bottom ----
-        rail = QFrame()
-        rail.setObjectName("railFrame")
-        rail.setFixedWidth(180)
-        rail.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
-        rail_lay = QVBoxLayout(rail)
-        rail_lay.setContentsMargins(0, 0, 0, 0)
-        rail_lay.setSpacing(0)
-
-        # profile selector at the top of the rail
-        rail_lay.addWidget(self._build_profile_bar())
-
-        self.nav = QListWidget()
-        self.nav.setObjectName("nav")
-        self.nav.setFrameShape(QFrame.NoFrame)
-        for name in NAV_ITEMS:
-            QListWidgetItem(name, self.nav)
-        self.nav.currentRowChanged.connect(self._on_nav)
-        # the list shows all items and sizes to fit (it never scrolls); the rail
-        # frame provides the full-height background behind it
-        self.nav.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.nav.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        self.nav.setSelectionMode(QAbstractItemView.SingleSelection)
-        rail_lay.addWidget(self.nav, 0)
-
-        # push the reset button down toward the bottom of the rail
-        rail_lay.addStretch(1)
-
-        sep = QFrame()
-        sep.setProperty("sep", "true")
-        sep.setFrameShape(QFrame.NoFrame)
-        rail_lay.addWidget(sep)
-        rail_lay.addSpacing(10)
-
-        self.reset_btn = QPushButton("Reset to Factory")
-        self.reset_btn.setObjectName("resetBtn")
-        self.reset_btn.clicked.connect(self._confirm_reset)
-        rail_lay.addWidget(self.reset_btn, 0)
-        rail_lay.addSpacing(14)
-
-        body.addWidget(rail)
-
-        # now that items/styles exist, size the nav to exactly fit its rows
-        self._fit_nav_height()
-
-        # ---- stacked panels (order matches NAV_ITEMS) ----
-        self.stack = QStackedWidget()
-        body.addWidget(self.stack, 1)
 
         self.store = MacroStore()
         set_macro_resolver(lambda mid: (self.store.get(mid) or {}).get("name", "Macro"))
@@ -279,20 +226,33 @@ class MainWindow(QMainWindow):
         self.performance_panel = PerformancePanel()
         self.autoswitch_panel = AutoSwitchPanel()
         self.profiles_panel = ProfilesPanel()
-        self.stack.addWidget(self.buttons_panel)         # 0 Buttons
-        self.stack.addWidget(self.macro_panel)            # 1 Macro
-        self.stack.addWidget(self.dpi_panel)              # 2 DPI
-        self.stack.addWidget(self.lighting_panel)         # 3 Lighting
-        self.stack.addWidget(self.performance_panel)      # 4 Performance
-        self.stack.addWidget(self.autoswitch_panel)       # 5 Auto-Switch
-        self.stack.addWidget(self.profiles_panel)         # 6 Profiles
-        self.nav.setCurrentRow(0)
+        self.wired_panel = WiredProfilePanel()
+        self.topbar = TopBar()
+        self.shell = AppShell(
+            topbar=self.topbar,
+            profile_bar=self._build_profile_bar(),
+            nav_items=NAV_ITEMS,
+            panels=[
+                self.buttons_panel, self.macro_panel, self.dpi_panel,
+                self.lighting_panel, self.performance_panel,
+                self.autoswitch_panel, self.profiles_panel, self.wired_panel,
+            ],
+            on_navigate=self._on_nav,
+            on_reset=self._confirm_reset,
+        )
+        self.setCentralWidget(self.shell)
+        self.nav = self.shell.nav
+        self.stack = self.shell.stack
+        self.reset_btn = self.shell.reset_btn
 
         # ---- controller ----
+        self._wired_only_active = False
         self.ctrl = DeviceController()
         self.commands = DeviceCommandService(self.ctrl)
         self.ctrl.connected.connect(self._on_connected)
-        self.ctrl.disconnected.connect(self.topbar.set_disconnected)
+        self.ctrl.disconnected.connect(self._on_device_disconnected)
+        self.ctrl.wired_only_detected.connect(self._on_wired_only_detected)
+        self.ctrl.wired_only_disconnected.connect(self._on_wired_only_disconnected)
         self.ctrl.error.connect(self._on_error)
         self.ctrl.dpi_level_changed.connect(self._on_dpi_push)
         self.ctrl.rate_changed.connect(self._on_rate_push)
@@ -379,18 +339,6 @@ class MainWindow(QMainWindow):
         self.ctrl.start()
 
     # -- nav ------------------------------------------------------------------
-    def _fit_nav_height(self):
-        """Set the nav list's height to exactly fit all rows (no scrolling)."""
-        n = self.nav.count()
-        if n == 0:
-            return
-        row_h = self.nav.sizeHintForRow(0)
-        if row_h <= 0:
-            row_h = 40
-        # list has 8px top+bottom padding from the stylesheet; add a little slack
-        total = row_h * n + 16 + 4
-        self.nav.setFixedHeight(total)
-
     def _on_nav(self, row):
         if 0 <= row < self.stack.count():
             self.stack.setCurrentIndex(row)
@@ -735,6 +683,8 @@ class MainWindow(QMainWindow):
 
     # -- controller handlers --------------------------------------------------
     def _on_connected(self, info):
+        self._wired_only_active = False
+        self._set_pro_controls_enabled(info.get("configurable", True))
         self.topbar.set_connection(info)
         # Wired is always "charging". Over 2.4GHz, charging is reported live by
         # the status push (see _on_charging); start from not-charging there.
@@ -744,6 +694,35 @@ class MainWindow(QMainWindow):
         # force=True: on connect the device state is unknown, push every section.
         if info.get("configurable", True) and self._current_config is not None:
             self.apply_profile(self._current_config, force=True)
+
+    def _on_device_disconnected(self):
+        self._set_pro_controls_enabled(True)
+        self.topbar.set_disconnected()
+
+    def _on_wired_only_detected(self, info):
+        self._wired_only_active = True
+        self._set_pro_controls_enabled(False)
+        self.topbar.set_wired_only(info)
+        self.nav.setCurrentRow(NAV_ITEMS.index("Wired Profiles"))
+        if not self.wired_panel.profile_file_label.toolTip():
+            self.wired_panel.status.setText(
+                "Wired-only mouse detected. Load its .pbin or profile.bin and matching Data.ini; "
+                "Pro controls are disabled because their protocol is incompatible."
+            )
+
+    def _on_wired_only_disconnected(self):
+        if not self._wired_only_active:
+            return
+        self._wired_only_active = False
+        self._set_pro_controls_enabled(True)
+        self.topbar.set_disconnected()
+
+    def _set_pro_controls_enabled(self, enabled):
+        for panel in (
+            self.buttons_panel, self.macro_panel, self.dpi_panel,
+            self.lighting_panel, self.performance_panel, self.autoswitch_panel,
+        ):
+            panel.setEnabled(enabled)
 
     def _on_error(self, msg):
         self.topbar.set_error(msg)
@@ -825,7 +804,11 @@ class MainWindow(QMainWindow):
                                   QSystemTrayIcon.Warning, 2500)
 
     def _on_command_done(self, method, ok):
-        pass
+        if not ok and not self._wired_only_active:
+            self.topbar.set_error(
+                "Configuration was not applied. Connect a configurable SM809 Pro, "
+                "or use Wired Profiles for the wired-only 04D9:A09F mouse."
+            )
 
     # -- actions --------------------------------------------------------------
     def _apply_dpi(self, dpi_values, colors, selected):
@@ -1179,6 +1162,11 @@ class MainWindow(QMainWindow):
             self._apply_overlay_appearance()      # revert preview tweaks to saved
 
     def closeEvent(self, e):
+        if self.wired_panel.is_applying and (self.tray is None or getattr(self, "_force_quit", False)):
+            QMessageBox.information(self, "Apply in progress",
+                                    "Wait for the wired profile apply to finish before quitting.")
+            e.ignore()
+            return
         # with a tray icon, closing hides to tray (keeps auto-switch running)
         if self.tray is not None and not getattr(self, "_force_quit", False):
             e.ignore()

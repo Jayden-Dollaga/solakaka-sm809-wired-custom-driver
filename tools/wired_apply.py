@@ -14,10 +14,11 @@ Add --apply to send (asks to confirm unless --yes). Close the official app first
   python tools/wired_apply.py --install "C:\...\SM809 mouse Software" --index 3 --apply
   python tools/wired_apply.py --pbin Original_profile.pbin --data-ini Data.ini
 
-UNTESTED ON HARDWARE. It sends exactly what the official app sends for that profile,
-including all four button pages, the DPI table and light colours -- so it overwrites
-what is on the mouse with that profile. Macro buttons are not supported yet and stop
-the run before anything is sent.
+Hardware testing is limited to one apply of the extracted factory profile on one
+04d9:a09f unit, followed by a successful 0x83 query. Other profiles/settings have
+not been read back. Apply sends the full profile, including all four button pages,
+DPI table, and light colours, so it overwrites the mouse's current configuration.
+Macro buttons are not supported and stop the run before anything is sent.
 """
 import argparse
 import os

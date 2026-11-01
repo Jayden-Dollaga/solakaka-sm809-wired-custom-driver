@@ -1,7 +1,8 @@
 # sm809wired -- engine for the wired-only SM809 (04d9:a09f)
 
-Built from USB captures of the official app, its files, and the rebuild guide. Not yet run on
-real hardware.
+Built from USB captures of the official app, its files, and the rebuild guide.
+One apply of the extracted factory profile completed on one `04d9:a09f` unit, and
+a post-apply `0x83` query echoed. Other profiles and setting readback remain unverified.
 
 | Module | What it does |
 |---|---|
@@ -21,7 +22,8 @@ Try it (dry run unless `--apply`): `python tools/wired_apply.py --install "<offi
   all 16 button entries incl. six keyboard keys and the fire key.
 
 ## Not verified / not implemented
-- Anything on a real mouse.
+- Profiles beyond the single factory-profile apply above, and independent readback
+  of settings after a write.
 - Macro buttons (actions 0x16, 0x39, 0x79) and the 0x13 macro pages: refuse to build.
 - Lighting parameter values away from the captured ones (extrapolated).
 - Other sensors' DPI packings; the optional 04 / 07 packets (only sent when `Distance != 0`).

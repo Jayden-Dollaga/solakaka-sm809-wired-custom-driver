@@ -3,8 +3,8 @@ First hardware check for the wired-only SM809 (04d9:a09f).
 
 Default mode is PASSIVE: it opens the 0xFF00/0xFF00 vendor interface and only
 READS one feature report (no writes). Add --query to also send the same 8-byte
-query the official app sends before reading (cmd 0x83 -- from static analysis,
-not yet confirmed on hardware).
+query the official app sends before reading (cmd 0x83 -- observed to echo on
+one 04d9:a09f unit after a factory-profile apply).
 
 It prints the raw bytes plus the descrambled version (using the shipped
 Data.ini password "FB1570"). Replies carry NO checksum; the signal that the
