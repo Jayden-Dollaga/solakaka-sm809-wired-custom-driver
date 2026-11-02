@@ -16,12 +16,14 @@ from PySide6.QtCore import Qt, Signal, QEvent
 from PySide6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget,
     QListWidgetItem, QStackedWidget, QPushButton, QComboBox, QSpinBox,
-    QLineEdit, QCheckBox, QFrame, QGridLayout,
+    QCheckBox,
 )
 
 from .. import theme
 from ..psf_import import VK_TO_HID
 from sm809pro import actions as A
+from wired.bridge import gun_binding_problem, macro_binding_problem
+from wired.protocol import gun_encoded_size
 
 
 def _build_qt_to_hid():
@@ -61,7 +63,7 @@ _QT_TO_HID = _build_qt_to_hid()
 # ---- code -> human label ---------------------------------------------------
 # Reverse map from the known named codes for quick description.
 _NAMED_BY_CODE = {tuple(v): k for k, v in A.BTN.items()}
-_HID_NAME = {v: k for k, v in A.HID.items()}
+_HID_NAME = dict(A.HID_NAMES)
 
 # Optional resolver set by the app: macro_id -> display name (for dict bindings).
 _MACRO_RESOLVER = None
@@ -82,12 +84,16 @@ def _mod_str(mask):
 
 
 def describe_action(code) -> str:
-    """Render an action as a label: a 3-byte code, a {'macro':id,..} binding, or
-    a {'runapp': path} host-side launcher binding."""
+    """Render an action as a label: a 3-byte code, a {'macro':id,..} binding,
+    a {'gun':id,..} binding, or a {'runapp': path} host-side launcher binding."""
     if isinstance(code, dict) and "runapp" in code:
         import os
         path = code.get("runapp") or ""
         return f"Run App: {os.path.basename(path) or '(none)'}"
+    if isinstance(code, dict) and "gun" in code:
+        name = code.get("name") or "Gun"
+        rep = max(1, min(3, int(code.get("repeat", 1) or 1)))
+        return f"Gun: {name} (x{rep})"
     if isinstance(code, dict) and "macro" in code:
         name = (_MACRO_RESOLVER(code["macro"]) if _MACRO_RESOLVER else None) or "Macro"
         pm = code.get("playmode", 1)
@@ -95,74 +101,79 @@ def describe_action(code) -> str:
         mode = {1: "hold", 2: f"x{rep}", 4: "toggle"}.get(pm, "?")
         return f"Macro: {name} ({mode})"
     t, p1, p2 = (tuple(code) + (0, 0, 0))[:3]
-    # exact named match first (covers mouse, dpi, media, office, window-mgmt, etc.)
+    # exact named match first (covers mouse, dpi, media, windows, browser, etc.)
     named = _NAMED_BY_CODE.get((t, p1, p2))
     if named:
         return A.ACTION_LABELS.get(named, named)
-    if t == 0x70:  # keyboard combo or modifier-only
+    if t == 0x15:  # wired keyboard shortcut (mods + firmware key id)
         mod = _mod_str(p1)
         if p2 == 0:
             return mod if mod else "(none)"
         key = _HID_NAME.get(p2, f"0x{p2:02X}").upper()
         return f"{mod}+{key}" if mod else f"Key: {key}"
-    if t == 0x30:  # fire
+    if t == 0x0A:  # wired rapid fire
         return f"Fire ({p1}ms x{p2 or '∞'})"
-    if t == 0x50:  # dpi lock
-        return f"DPI Lock {100 + p1 * 100}"
-    if t == 0x90:  # macro
-        playmode = (p1 >> 4) & 0x0F
-        slot = p1 & 0x0F
-        mode = {1: "hold", 2: f"x{p2}", 4: "toggle"}.get(playmode, "?")
-        return f"Macro #{slot} ({mode})"
+    if t == 0x16:
+        return "Select Macro"
     if t == 0xFF:
         return "(unset)"
-    return f"{t:02X} {p1:02X} {p2:02X}"
+    from wired.protocol import action_label
+    return action_label(t)
 
 
 # ---- category tree (for the picker UI) -------------------------------------
 # Each category yields either a flat list of (label, code) or a custom editor.
 ACTION_TREE = {
     "Mouse": [
-        ("Left Button", A.BTN["left"]), ("Right Button", A.BTN["right"]),
-        ("Middle Button", A.BTN["middle"]), ("Forward", A.BTN["forward"]),
-        ("Backward", A.BTN["back"]),
+        ("Left Click", A.BTN["left"]), ("Right Click", A.BTN["right"]),
+        ("Middle Click", A.BTN["middle"]), ("Forward", A.BTN["forward"]),
+        ("Backward", A.BTN["back"]), ("Double Click", A.BTN["double"]),
+        ("Scroll Up", A.BTN["scroll_up"]), ("Scroll Down", A.BTN["scroll_down"]),
     ],
     "DPI": [
         ("DPI +", A.BTN["dpi_up"]), ("DPI -", A.BTN["dpi_down"]),
-        ("DPI Loop", A.BTN["dpi_cycle"]),
-    ],
-    "Multimedia": [
-        ("Media Select", A.BTN["media_select"]), ("Prev Track", A.BTN["prev_track"]),
-        ("Next Track", A.BTN["next_track"]), ("Stop", A.BTN["stop"]),
-        ("Play/Pause", A.BTN["play_pause"]), ("Mute", A.BTN["mute"]),
-        ("Volume +", A.BTN["vol_up"]), ("Volume -", A.BTN["vol_down"]),
-        ("Mail", A.BTN["email"]), ("Calculator", A.BTN["calculator"]),
-    ],
-    "Word Office": [
-        ("Copy", A.BTN["copy"]), ("Paste", A.BTN["paste"]), ("Cut", A.BTN["cut"]),
-        ("Select All", A.BTN["select_all"]), ("New", A.BTN["new"]),
-        ("Save", A.BTN["save"]), ("Print", A.BTN["print"]), ("Open", A.BTN["open"]),
-        ("Undo", A.BTN["undo"]),
-    ],
-    "Window Management": [
-        ("My Computer", A.BTN["my_computer"]), ("Close Window", A.BTN["close_window"]),
-        ("Display Desktop", A.BTN["display_desktop"]), ("Run", A.BTN["run"]),
-        ("Minimize", A.BTN["minimize"]), ("Maximize", A.BTN["maximize"]),
-    ],
-    "DPI Lock": [
-        (f"{100 + i * 100} DPI", A.dpi_lock(i)) for i in range(1, 12)
+        ("DPI Cycle", A.BTN["dpi_cycle"]), ("Sniper Key", A.BTN["sniper"]),
     ],
     "Quick": [
         ("Three Click", A.BTN["triple"]), ("Fire Key", A.BTN["fire"]),
-        ("Switch Effect (lighting)", A.BTN["light_toggle"]),
+        ("Mode Switch", A.BTN["mode_switch"]), ("Send Gun", A.BTN["send_gun"]),
+        ("Light Mode Switch", A.BTN["light_toggle"]),
+        ("Report +", A.BTN["report_up"]), ("Report -", A.BTN["report_down"]),
+        ("Report Cycle", A.BTN["report_cycle"]),
         ("Disable", A.BTN["disable"]),
+    ],
+    "Windows": [
+        ("Cut", A.BTN["cut"]), ("Copy", A.BTN["copy"]), ("Paste", A.BTN["paste"]),
+        ("Open", A.BTN["open"]), ("Save", A.BTN["save"]), ("Find", A.BTN["find"]),
+        ("Redo", A.BTN["undo"]), ("Select All", A.BTN["select_all"]),
+        ("Print", A.BTN["print"]), ("New", A.BTN["new"]),
+        ("Close Window", A.BTN["close_window"]),
+        ("Swap Windows", A.BTN["swap_windows"]),
+        ("Show Desktop", A.BTN["display_desktop"]),
+        ("Run Command", A.BTN["run"]), ("Lock PC", A.BTN["lock_pc"]),
+    ],
+    "Multimedia": [
+        ("Media Player", A.BTN["media_select"]), ("Play / Pause", A.BTN["play_pause"]),
+        ("Stop", A.BTN["stop"]), ("Previous Track", A.BTN["prev_track"]),
+        ("Next Track", A.BTN["next_track"]), ("Volume +", A.BTN["vol_up"]),
+        ("Volume -", A.BTN["vol_down"]), ("Mute", A.BTN["mute"]),
+    ],
+    "Browser": [
+        ("Browser Home", A.BTN["browser_home"]),
+        ("Favorites", A.BTN["browser_favorites"]),
+        ("Forward", A.BTN["browser_forward"]),
+        ("Backward", A.BTN["browser_back"]),
+        ("Stop", A.BTN["browser_stop"]),
+        ("Refresh", A.BTN["browser_refresh"]),
+        ("Search", A.BTN["browser_search"]),
+        ("Email", A.BTN["email"]), ("Calculator", A.BTN["calculator"]),
+        ("My Computer", A.BTN["my_computer"]),
     ],
 }
 # Categories needing a custom editor pane (not just a list):
-CUSTOM_CATEGORIES = ["Key Combination", "Fire Key", "Macro", "Run App"]
+CUSTOM_CATEGORIES = ["Key Combination", "Fire Key", "Macro", "Gun"]
 CATEGORY_ORDER = (["Mouse", "DPI", "Quick", "Key Combination", "Fire Key",
-                   "Macro", "Run App", "Multimedia", "Word Office",
-                   "Window Management", "DPI Lock"])
+                   "Macro", "Gun", "Windows", "Multimedia", "Browser"])
 
 
 class _ComboEditor(QWidget):
@@ -247,8 +258,23 @@ class _ComboEditor(QWidget):
 
     def _handle_key_press(self, event):
         k = event.key()
-        # Modifier pressed alone: select that modifier alone and set Key to None
+        # Modifier pressed alone: prefer the specific left/right key (LAlt,
+        # RShift, …) like the original driver's "Key" field, and fall back to
+        # the generic checkbox when the platform does not say which side.
         if k in (Qt.Key_Control, Qt.Key_Shift, Qt.Key_Alt, Qt.Key_Meta):
+            vk = event.nativeVirtualKey() if hasattr(event, "nativeVirtualKey") else 0
+            usage = VK_TO_HID.get(vk) if vk else None
+            if usage is not None and 0xE0 <= usage <= 0xE7:
+                idx = self.key.findData(usage)
+                if idx >= 0:
+                    self.ctrl.setChecked(False)
+                    self.shift.setChecked(False)
+                    self.alt.setChecked(False)
+                    self.win.setChecked(False)
+                    self.key.setCurrentIndex(idx)
+                    self._stop_listening()
+                    self.changed.emit()
+                    return
             self.ctrl.setChecked(k == Qt.Key_Control)
             self.shift.setChecked(k == Qt.Key_Shift)
             self.alt.setChecked(k == Qt.Key_Alt)
@@ -284,14 +310,14 @@ class _ComboEditor(QWidget):
         if not code or isinstance(code, dict):
             return
         t, p1, p2 = (tuple(code) + (0, 0, 0))[:3]
-        if t == 0x60 and p1 == 0 and p2 == 0:  # Disable
+        if t == 0x00 and p1 == 0 and p2 == 0:  # Disable
             self.ctrl.setChecked(False)
             self.shift.setChecked(False)
             self.alt.setChecked(False)
             self.win.setChecked(False)
             self.key.setCurrentIndex(0)  # None
             return
-        if t != 0x70:
+        if t != 0x15:
             return
         self.ctrl.setChecked(bool(p1 & A.MOD_CTRL))
         self.shift.setChecked(bool(p1 & A.MOD_SHIFT))
@@ -338,6 +364,8 @@ class _FireEditor(QWidget):
 
 class _MacroEditor(QWidget):
     """Bind a button to a macro from the library (by name) + play mode."""
+    changed = Signal()
+
     def __init__(self, macros=None):
         super().__init__()
         self._macros = macros or []
@@ -357,20 +385,48 @@ class _MacroEditor(QWidget):
         self.mode = QComboBox()
         self.mode.addItem("Repeat while held", 1)
         self.mode.addItem("Play N times", 2)
-        self.mode.addItem("Toggle on/off", 4)   # playmode 4 = toggle (CONFIRMED pcap; not 3)
         lay.addWidget(self.mode)
         self.count_label = QLabel("Times (N)")
         self.count = QSpinBox(); self.count.setRange(1, 255); self.count.setValue(1)
         lay.addWidget(self.count_label)
         lay.addWidget(self.count)
+        self.hint = QLabel("")
+        self.hint.setWordWrap(True)
+        lay.addWidget(self.hint)
         self.mode.currentIndexChanged.connect(self._sync)
+        self.macro.currentIndexChanged.connect(self._sync)
+        self.count.valueChanged.connect(lambda *_: self.changed.emit())
         lay.addStretch(1)
         self._sync()
+
+    def _current(self):
+        i = self.macro.currentIndex()
+        if 0 <= i < len(self._macros):
+            return self._macros[i]
+        return None
+
+    def problem(self) -> str:
+        m = self._current()
+        if m is None:
+            return "create a macro in the Macro tab first"
+        return macro_binding_problem(m.get("events") or [])
 
     def _sync(self):
         is_n = self.mode.currentData() == 2
         self.count_label.setVisible(is_n)
         self.count.setVisible(is_n)
+        m = self._current()
+        problem = self.problem()
+        if problem:
+            self.hint.setText(problem)
+            self.hint.setStyleSheet(f"color: {theme.WARN};")
+        else:
+            n = len(m.get("events") or [])
+            self.hint.setText(
+                f"{n} events. The mouse plays this macro from its own "
+                "memory, so the studio does not need to stay open.")
+            self.hint.setStyleSheet(f"color: {theme.TEXT_DIM};")
+        self.changed.emit()
 
     def set_current(self, binding):
         if not isinstance(binding, dict):
@@ -385,66 +441,133 @@ class _MacroEditor(QWidget):
         self._sync()
 
     def code(self):
-        mid = self.macro.currentData()
-        if mid is None:
+        m = self._current()
+        if m is None or self.problem():
             return None
         pm = self.mode.currentData()
         rep = self.count.value() if pm == 2 else 0
-        return {"macro": mid, "playmode": pm, "repeat": rep}
+        return {"macro": m["id"], "name": m.get("name"), "playmode": pm,
+                "repeat": rep, "events": [dict(e) for e in m.get("events") or []]}
 
 
-class _RunAppEditor(QWidget):
-    """Pick an executable to launch when this button is pressed (host-side).
+class _GunEditor(QWidget):
+    """Bind a button to a recoil pattern from the Gun library + repeat count."""
+    changed = Signal()
 
-    The device gets the (0x60,0x05,0x00) placeholder; the host watches report-04
-    byte[7] and launches this exe (see app.autoswitch / MainWindow._on_runapp).
-    """
-    def __init__(self):
+    def __init__(self, guns=None):
         super().__init__()
+        self._guns = {g["id"]: g for g in (guns or [])}
+        self._order = [g["id"] for g in (guns or [])]
+        self._override = None
         lay = QVBoxLayout(self)
         lay.setContentsMargins(16, 16, 16, 16)
         lay.setSpacing(12)
-        lay.addWidget(QLabel("Application to launch"))
-        row = QHBoxLayout()
-        self.path = QLineEdit()
-        self.path.setPlaceholderText("C:\\Path\\To\\App.exe")
-        row.addWidget(self.path, 1)
-        browse = QPushButton("Browse…")
-        browse.clicked.connect(self._browse)
-        row.addWidget(browse)
-        lay.addLayout(row)
-        hint = QLabel("Launched by the app while it runs (the mouse button itself "
-                      "does nothing on the device).")
-        hint.setWordWrap(True)
-        lay.addWidget(hint)
+        lay.addWidget(QLabel("Gun pattern"))
+        self.gun = QComboBox()
+        if self._order:
+            for gid in self._order:
+                self.gun.addItem(self._guns[gid]["name"], gid)
+        else:
+            self.gun.addItem("(no patterns — create one in the Gun tab)", None)
+            self.gun.setEnabled(False)
+        lay.addWidget(self.gun)
+        lay.addWidget(QLabel("Repeat"))
+        self.repeat = QComboBox()
+        for n in (1, 2, 3):
+            self.repeat.addItem(f"{n}x", n)
+        lay.addWidget(self.repeat)
+        self.hint = QLabel("")
+        self.hint.setWordWrap(True)
+        self.hint.setStyleSheet(f"color: {theme.TEXT_DIM};")
+        lay.addWidget(self.hint)
         lay.addStretch(1)
+        self.gun.currentIndexChanged.connect(self._sync)
+        self.repeat.currentIndexChanged.connect(lambda *_: self.changed.emit())
+        self._sync()
 
-    def _browse(self):
-        from PySide6.QtWidgets import QFileDialog
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Choose application", "",
-            "Programs (*.exe *.lnk *.bat *.cmd);;All files (*)")
-        if path:
-            self.path.setText(path)
+    def _current(self):
+        gid = self.gun.currentData()
+        if gid is None:
+            return None
+        return self._guns.get(gid) or (
+            self._override if (self._override or {}).get("id") == gid else None)
+
+    def problem(self) -> str:
+        g = self._current()
+        if not g:
+            return "create a pattern in the Gun tab first"
+        if not g.get("rows"):
+            return "the pattern has no bullets"
+        return gun_binding_problem(g.get("rows") or [])
+
+    def _sync(self):
+        g = self._current()
+        problem = self.problem()
+        if problem:
+            self.hint.setText(problem)
+            self.hint.setStyleSheet(f"color: {theme.WARN};")
+            self.changed.emit()
+            return
+        rows = g.get("rows") or []
+        size = gun_encoded_size(rows)
+        notes = [f"{len(rows)} bullets, {size}/128 encoded bytes."]
+        if all(int(r[0]) == 0 and int(r[1]) == 0 for r in rows):
+            notes.append("Every offset is zero: the pattern only pauses, it "
+                         "does not move the crosshair.")
+        elif any(int(r[0]) < 0 or int(r[1]) < 0 for r in rows):
+            notes.append("Negative offsets are sent as their absolute value: "
+                         "the firmware has no sign, so the pull is always "
+                         "right/down. Keep X and Y positive.")
+        self.hint.setText(" ".join(notes))
+        warn = (len(notes) > 1)
+        self.hint.setStyleSheet(
+            f"color: {theme.WARN if warn else theme.TEXT_DIM};")
+        self.changed.emit()
 
     def set_current(self, binding):
-        if isinstance(binding, dict):
-            self.path.setText(binding.get("runapp") or "")
+        if not isinstance(binding, dict):
+            return
+        gid = binding.get("gun")
+        if gid is None:
+            return
+        if self.gun.findData(gid) < 0:
+            # A pattern embedded in this profile but absent from the library.
+            self._override = {
+                "id": gid,
+                "name": binding.get("name") or "Device Gun",
+                "rows": list(binding.get("rows") or []),
+            }
+            self.gun.addItem(self._override["name"], gid)
+        self.gun.setCurrentIndex(max(0, self.gun.findData(gid)))
+        ri = self.repeat.findData(int(binding.get("repeat", 1) or 1))
+        if ri >= 0:
+            self.repeat.setCurrentIndex(ri)
+        self._sync()
 
     def code(self):
-        p = self.path.text().strip()
-        return {"runapp": p} if p else None
+        gid = self.gun.currentData()
+        g = self._current()
+        if gid is None or g is None or self.problem():
+            return None
+        return {
+            "gun": gid,
+            "name": g.get("name") or "Gun",
+            "rows": [list(r) for r in g.get("rows") or []],
+            "repeat": max(1, min(3, int(self.repeat.currentData() or 1))),
+        }
 
 
 class ActionPicker(QDialog):
-    def __init__(self, current_code=None, parent=None, phys=None, macros=None):
+    def __init__(self, current_code=None, parent=None, phys=None, macros=None,
+                 guns=None):
         super().__init__(parent)
         self.setWindowTitle("Assign action")
         self.setModal(True)
         self.setFixedSize(560, 420)
         self._result = None
-        self._phys = phys   # 1-based physical button being edited (for "Default")
+        self._phys = phys   # 0-based firmware slot being edited (for "Default")
         self._macros = macros or []
+        self._guns = guns or []
         self.setStyleSheet(f"""
             QDialog {{ background: {theme.BG}; }}
             QLabel {{ color: {theme.TEXT_DIM}; }}
@@ -456,7 +579,7 @@ class ActionPicker(QDialog):
             QListWidget::item:hover {{ background: {theme.SURFACE_2}; color: {theme.TEXT}; }}
             QListWidget::item:selected {{ background: {theme.SURFACE_2}; color: {theme.TEXT};
                 border-left: 2px solid {theme.ACCENT}; }}
-            QComboBox, QSpinBox, QLineEdit {{
+            QComboBox, QSpinBox {{
                 background: {theme.SURFACE_2}; border: 1px solid {theme.BORDER};
                 border-radius: 6px; padding: 6px 10px; color: {theme.TEXT};
             }}
@@ -466,7 +589,8 @@ class ActionPicker(QDialog):
             QCheckBox {{ color: {theme.TEXT_DIM}; spacing: 7px; }}
             QCheckBox::indicator {{ width: 15px; height: 15px; border-radius: 4px;
                 border: 1px solid {theme.BORDER}; background: {theme.SURFACE_2}; }}
-            QCheckBox::indicator:checked {{ background: {theme.ACCENT}; border-color: {theme.ACCENT}; }}
+            QCheckBox::indicator:checked {{ background: {theme.ACCENT}; border-color: {theme.ACCENT};
+                image: url("{theme.CHECK_ICON}"); image-position: center; }}
             QPushButton {{ background: {theme.SURFACE_2}; border: 1px solid {theme.BORDER};
                 border-radius: 6px; padding: 7px 16px; color: {theme.TEXT}; }}
             QPushButton:hover {{ border-color: {theme.TEXT_DIM}; }}
@@ -503,7 +627,7 @@ class ActionPicker(QDialog):
         self.combo_editor = _ComboEditor(); self.stack.addWidget(self.combo_editor)   # 1
         self.fire_editor = _FireEditor();   self.stack.addWidget(self.fire_editor)     # 2
         self.macro_editor = _MacroEditor(self._macros); self.stack.addWidget(self.macro_editor)    # 3
-        self.runapp_editor = _RunAppEditor(); self.stack.addWidget(self.runapp_editor)              # 4
+        self.gun_editor = _GunEditor(self._guns); self.stack.addWidget(self.gun_editor)            # 4
 
         root.addLayout(body, 1)
 
@@ -513,7 +637,7 @@ class ActionPicker(QDialog):
         self.preview.setStyleSheet(f"color: {theme.ACCENT}; font-family: {theme.FONT_MONO};")
         footer.addWidget(self.preview)
         footer.addStretch(1)
-        # "Default" resets to this physical button's factory action (if known)
+        # "Default" resets to this firmware slot's factory action (if known)
         if self._phys is not None:
             default_btn = QPushButton("Default")
             default_btn.setToolTip("Reset this button to its factory default")
@@ -532,23 +656,23 @@ class ActionPicker(QDialog):
         self.macro_editor.macro.currentIndexChanged.connect(lambda *_: self._update_preview())
         self.macro_editor.mode.currentIndexChanged.connect(lambda *_: self._update_preview())
         self.macro_editor.count.valueChanged.connect(lambda *_: self._update_preview())
-        self.runapp_editor.path.textChanged.connect(lambda *_: self._update_preview())
+        self.gun_editor.changed.connect(self._update_preview)
 
         # Select initial category and pre-populate if needed
         matched = False
-        if isinstance(current_code, dict) and "macro" in current_code:
+        if isinstance(current_code, dict) and "gun" in current_code:
+            self.cats.setCurrentRow(CATEGORY_ORDER.index("Gun"))
+            self.gun_editor.set_current(current_code)
+            matched = True
+        elif isinstance(current_code, dict) and "macro" in current_code:
             self.cats.setCurrentRow(CATEGORY_ORDER.index("Macro"))
             self.macro_editor.set_current(current_code)
             matched = True
-        elif isinstance(current_code, dict) and "runapp" in current_code:
-            self.cats.setCurrentRow(CATEGORY_ORDER.index("Run App"))
-            self.runapp_editor.set_current(current_code)
-            matched = True
-        elif isinstance(current_code, (tuple, list)) and len(current_code) >= 3 and current_code[0] == 0x70 and tuple(current_code[:3]) not in _NAMED_BY_CODE:
+        elif isinstance(current_code, (tuple, list)) and len(current_code) >= 3 and current_code[0] == 0x15 and tuple(current_code[:3]) not in _NAMED_BY_CODE:
             self.cats.setCurrentRow(CATEGORY_ORDER.index("Key Combination"))
             self.combo_editor.set_current(current_code)
             matched = True
-        elif isinstance(current_code, (tuple, list)) and len(current_code) >= 3 and current_code[0] == 0x30 and tuple(current_code[:3]) not in _NAMED_BY_CODE:
+        elif isinstance(current_code, (tuple, list)) and len(current_code) >= 3 and current_code[0] == 0x0A and tuple(current_code[:3]) not in _NAMED_BY_CODE:
             self.cats.setCurrentRow(CATEGORY_ORDER.index("Fire Key"))
             self.fire_editor.interval.setValue(current_code[1])
             self.fire_editor.count.setValue(current_code[2])
@@ -569,28 +693,40 @@ class ActionPicker(QDialog):
         self._update_preview()
 
     def _accept_default(self):
-        """Resolve this physical button's factory-default code and accept it."""
+        """Resolve this slot's factory-default binding and accept it."""
         if self._phys is None:
             return
-        defaults = A.default_button_codes()  # 0-based physical index
-        idx = self._phys - 1
+        defaults = A.default_button_codes()  # 0-based wired slot index
+        idx = int(self._phys)
         if 0 <= idx < len(defaults):
-            self._result = tuple(defaults[idx])
+            code = defaults[idx]
+            self._result = dict(code) if isinstance(code, dict) else tuple(code)
             self.accept()
+
+    def _current_problem(self) -> str:
+        idx = self.stack.currentIndex()
+        editor = {3: self.macro_editor, 4: self.gun_editor}.get(idx)
+        if editor is not None:
+            return editor.problem()
+        return ""
 
     def _update_preview(self):
         code = self._current_code()
         if code is not None:
             self.preview.setText(describe_action(code))
+            self.preview.setStyleSheet(
+                f"color: {theme.ACCENT}; font-family: {theme.FONT_MONO};")
             self.ok_btn.setEnabled(True)
         else:
-            self.preview.setText("(none)")
+            problem = self._current_problem()
+            self.preview.setText(problem or "(none)")
+            self.preview.setStyleSheet(f"color: {theme.WARN};")
             self.ok_btn.setEnabled(False)
 
     def _on_cat(self, row):
         name = CATEGORY_ORDER[row]
         if name in CUSTOM_CATEGORIES:
-            idx = {"Key Combination": 1, "Fire Key": 2, "Macro": 3, "Run App": 4}[name]
+            idx = {"Key Combination": 1, "Fire Key": 2, "Macro": 3, "Gun": 4}[name]
             self.stack.setCurrentIndex(idx)
         else:
             self.list_pane.clear()
@@ -614,7 +750,7 @@ class ActionPicker(QDialog):
         if idx == 3:
             return self.macro_editor.code()
         if idx == 4:
-            return self.runapp_editor.code()
+            return self.gun_editor.code()
         return None
 
     def _accept_from_list(self):
@@ -630,8 +766,8 @@ class ActionPicker(QDialog):
         return self._result
 
 
-def pick_action(current_code=None, parent=None, phys=None, macros=None):
-    dlg = ActionPicker(current_code, parent, phys=phys, macros=macros)
+def pick_action(current_code=None, parent=None, phys=None, macros=None, guns=None):
+    dlg = ActionPicker(current_code, parent, phys=phys, macros=macros, guns=guns)
     if dlg.exec() == QDialog.Accepted:
         return dlg.result_code()
     return None

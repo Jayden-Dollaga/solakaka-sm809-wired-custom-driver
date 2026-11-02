@@ -177,7 +177,12 @@ class AutoSwitcher(QObject):
         if not self._enabled:
             return
         exe, title, path = self._watcher.current()
-        target = match_profile(self._store.all(), exe, title, path) or self._base_id
+        # Only id + rules are needed for matching. A ProfileStore exposes
+        # ``match_targets`` so the 200 ms poll does not rebuild every profile's
+        # full button/DPI/lighting config; simpler stores still work via all().
+        source = getattr(self._store, "match_targets", None)
+        targets = source() if callable(source) else self._store.all()
+        target = match_profile(targets, exe, title, path) or self._base_id
         # already on the right profile -> nothing pending
         if not target or target == self._get_applied():
             self._pending = None

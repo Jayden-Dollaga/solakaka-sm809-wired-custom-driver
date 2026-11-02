@@ -1,280 +1,329 @@
-"""
-app.controller -- DeviceController: owns the SM809Pro session off the UI thread.
+"""DeviceController -- owns the wired SM809 session off the UI thread.
 
-The GUI must never block on HID I/O (a SetFeature + 60ms settle would freeze the
-UI). So all device calls run on a dedicated worker thread via a queue, and
-results/events come back as Qt signals. The persistent session + keep-alive
-(the wedge fix) live here too, plus the StatusListener for live DPI reflection,
-and automatic background reconnection & mode switching (2.4GHz / Bluetooth / wired).
+All HID traffic (a full profile is hundreds of feature/block writes) runs on a
+worker thread. The UI queues commands by name and receives results through Qt
+signals. Unlike the wireless reference there is no status listener or battery
+channel: the wired monitor interface reports stage / rate / mode changes, which
+the service forwards here.
 
-Usage from the UI:
-    ctrl = DeviceController()
+Usage:
+    ctrl = DeviceController(profile_store)
     ctrl.connected.connect(on_connected)
-    ctrl.dpi_level_changed.connect(on_dpi_push)   # live status push
     ctrl.command_done.connect(on_done)
-    ctrl.start()                 # starts background auto-detection loop
-    ctrl.call("set_dpi", [800, 1600, 3200])   # queue a device call by method name
+    ctrl.start()
+    ctrl.call("apply_config", config, pid)   # queue a full-profile write
 """
 
+from __future__ import annotations
+
+import logging
 import queue
 import threading
 import time
 
 from PySide6.QtCore import QObject, Signal
 
-from sm809pro import SM809Pro
-from sm809pro.device import detect_modes
-from sm809pro.status import StatusListener
-from sm809wired.device import find_interface as find_wired_interface
+from wired.bridge import dpi_from_display, rate_hz
+from wired.device import DeviceService
+from wired.transport import HidTransport
+
+_log = logging.getLogger("sm809.controller")
 
 
 class DeviceController(QObject):
     # lifecycle
-    connected = Signal(dict)        # {connection, product, configurable} on success
+    connected = Signal(dict)        # {connection, product, configurable}
     disconnected = Signal()
-    wired_only_detected = Signal(dict)
-    wired_only_disconnected = Signal()
     error = Signal(str)
-    # live device push (from status interface)
-    dpi_level_changed = Signal(int)     # current DPI stage index changed
-    rate_changed = Signal(int)          # current polling rate (Hz) from the push
-    battery_changed = Signal(int)       # battery percent
-    charging_changed = Signal(bool)     # charging state (if reported)
-    alive_changed = Signal(bool)        # True=mouse awake, False=offline (dongle in, mouse off)
-    runapp_pressed = Signal(int)        # a Run-APP button was pressed (report-04 byte[7] code)
+    # live device push (wired monitor interface)
+    dpi_level_changed = Signal(int)     # current DPI stage index
+    rate_changed = Signal(int)          # current polling rate (Hz)
+    mode_changed = Signal(int)          # work mode: 0 = Office, 1 = Game
+    # kept for shell compatibility; the wired mouse has no battery
+    battery_changed = Signal(int)
+    charging_changed = Signal(bool)
+    alive_changed = Signal(bool)
+    runapp_pressed = Signal(int)
     # a queued command finished: (method_name, ok)
     command_done = Signal(str, bool)
     busy_changed = Signal(bool)         # True while a queued command is running
 
-    def __init__(self, keepalive_interval=8.0, parent=None, device_factory=None,
-                 status_factory=None, mode_detector=None, wired_detector=None):
+    def __init__(self, profiles, demo=False, parent=None):
         super().__init__(parent)
-        self._dev = (device_factory or SM809Pro)()
-        self._status_factory = status_factory or StatusListener
-        self._mode_detector = mode_detector or detect_modes
-        self._wired_detector = wired_detector or find_wired_interface
-        self._wired_only_present = False
-        self._status = None
-        self._q = queue.Queue()
-        self._worker = None
+        self._profiles = profiles
+        self._dev = DeviceService(
+            profiles.device_config,
+            profiles.data,
+            demo=demo,
+            transport=None if not demo else HidTransport(profiles.device_config, demo=True),
+        )
+        self._dev.connection = "wired"
+        self._dev.pid = profiles.device_config.pid
+        self._dev.vid = profiles.device_config.vid
+        self._dev.configurable = True
+        self._dev.interface_info = {"product_string": "SM809 (USB wired)"}
+        self._dev.on_profile_changed = self._on_profile_changed
+        self._dev.on_disconnect = self._on_lost
+        # DeviceService logs through app.logging_setup itself; no print wiring.
+        self._dev.on_log = None
+        # Apply warnings describe standing configuration (e.g. Distance=0) and
+        # would otherwise repeat on every write. Show them once per session.
+        self._seen_warnings: set[str] = set()
+
+        self._q: queue.Queue = queue.Queue()
+        self._worker: threading.Thread | None = None
         self._stop = threading.Event()
-        self._keepalive_interval = keepalive_interval
-        self._last_keepalive = 0.0
-        self._last_mode_check = 0.0
+        self._lost = threading.Event()      # set by the HID monitor thread
         self._is_connected = False
+        self._last_check = 0.0
         self._dev_lock = threading.RLock()
 
     # -- public API -----------------------------------------------------------
+    @property
+    def demo(self) -> bool:
+        return self._dev.demo
+
     def start(self):
-        """Start the background worker thread for auto-detection and command processing."""
         self._stop.clear()
-        self._worker = threading.Thread(target=self._run, daemon=True)
+        self._worker = threading.Thread(target=self._run, daemon=True,
+                                        name="sm809-wired")
         self._worker.start()
 
     def call(self, method: str, *args, **kwargs):
-        """Queue a device method call by name; result via command_done signal."""
-        self._q.put((method, args, kwargs))
+        """Queue a device method call by name; result via command_done.
+
+        Full-profile writes are state snapshots: if several are waiting, only
+        the newest matters. Replacing the stale ones keeps a slider drag or a
+        fast series of edits from building a backlog that keeps the HID link
+        busy for seconds (the pointer visibly stutters while it is flooded).
+        """
+        item = (method, args, kwargs)
+        if method == "apply_config":
+            with self._q.mutex:
+                pending = list(self._q.queue)
+                if any(p is not None and p[0] == "apply_config" for p in pending):
+                    # Keep the queue order (a stage change queued after the
+                    # write must still run after it) and swap the newest
+                    # snapshot into the first waiting slot.
+                    kept = []
+                    replaced = False
+                    for p in pending:
+                        if p is not None and p[0] == "apply_config":
+                            if not replaced:
+                                kept.append(item)
+                                replaced = True
+                            continue
+                        kept.append(p)
+                    self._q.queue.clear()
+                    self._q.queue.extend(kept)
+                    self._q.not_empty.notify()
+                    return
+        self._q.put(item)
 
     def shutdown(self):
-        """Cleanly stop worker thread, status listener, and close device."""
         self._stop.set()
-        self._q.put(None)  # unblock worker queue
-        if self._status:
+        self._q.put(None)
+        if self._worker and self._worker.is_alive():
+            self._worker.join(timeout=3.0)
+        with self._dev_lock:
             try:
-                self._status.stop()
+                self._dev.disconnect()
             except Exception:
                 pass
-            self._status = None
-        if self._worker and self._worker.is_alive():
-            self._worker.join(timeout=2.0)
-        with self._dev_lock:
-            self._dev.close()
 
-    # -- worker thread --------------------------------------------------------
+    # -- worker ---------------------------------------------------------------
     def _run(self):
         while not self._stop.is_set():
-            # 1. If not connected, attempt auto-detection / connect
-            if not self._is_connected or not self._dev.is_open:
+            # 0. The monitor thread only raises a flag: closing the HID
+            #    handles from that thread would race the worker's own writes.
+            #    Do the teardown here, on the thread that owns the device.
+            if self._lost.is_set():
+                self._lost.clear()
+                self._teardown()
+
+            # 1. Connect / reconnect when the cable appears.
+            if not self._is_connected:
                 self._attempt_connect()
                 if not self._is_connected:
-                    self._check_wired_only_presence()
-                    # Still disconnected: drain any queued calls so callers don't hang
                     self._drain_queue()
-                    # Wait 1.5s before next polling attempt
                     self._stop.wait(1.5)
                     continue
 
-            # 2. Wait for next queued command or timeout (1.0s) for health monitoring
+            # 2. Wait for a queued command (1 s timeout for link maintenance).
             try:
                 item = self._q.get(timeout=1.0)
             except queue.Empty:
                 item = None
-
             if self._stop.is_set():
                 break
 
-            # 3. Process command if present
+            # 3. Execute it.
             if item is not None:
                 method, args, kwargs = item
+                if method is None:
+                    continue
                 self.busy_changed.emit(True)
                 ok = False
                 try:
                     with self._dev_lock:
-                        fn = getattr(self._dev, method)
-                        ok = bool(fn(*args, **kwargs))
-                except Exception as e:
-                    self.error.emit(f"{method} failed: {e}")
+                        ok = bool(self._dispatch(method, args, kwargs))
+                except Exception as exc:
+                    _log.exception("command %s failed", method)
+                    self.error.emit(f"{method} failed: {exc}")
                     ok = False
                 self.command_done.emit(method, ok)
                 if self._q.empty():
                     self.busy_changed.emit(False)
 
-            # 4. Connection maintenance & mode checking
-            if self._is_connected and not self._stop.is_set():
-                self._maintain_connection()
+            # 4. Link health.
+            if self._is_connected:
+                self._maintain()
 
-        # Clean shutdown
-        self._teardown_device()
+        with self._dev_lock:
+            try:
+                self._dev.disconnect()
+            except Exception:
+                pass
+
+    def _dispatch(self, method, args, kwargs):
+        if method == "apply_config":
+            return self._apply_config(*args, **kwargs)
+        if method == "set_active_dpi":
+            return self._set_active_dpi(*args, **kwargs)
+        return getattr(self._dev, method)(*args, **kwargs)
 
     def _attempt_connect(self):
-        with self._dev_lock:
-            ok = False
-            try:
-                ok = self._dev.open()
-            except Exception as e:
-                ok = False
-
-            if ok:
-                self._is_connected = True
-                if self._wired_only_present:
-                    self._wired_only_present = False
-                    self.wired_only_disconnected.emit()
-                info = {
-                    "connection": self._dev.connection,
-                    "product": (self._dev.interface_info or {}).get("product_string", "SM809 Pro"),
-                    "configurable": getattr(self._dev, "configurable", True),
-                }
-                self.connected.emit(info)
-
-                # Spin up StatusListener
-                if self._status:
-                    try:
-                        self._status.stop()
-                    except Exception:
-                        pass
-                    self._status = None
-
-                self._status = self._status_factory(
-                    on_change=self._on_status_push,
-                    on_battery=lambda pct: self.battery_changed.emit(pct),
-                    on_alive=self._on_alive_event,
-                    on_charging=lambda ch: self.charging_changed.emit(ch),
-                    on_runapp=lambda code: self.runapp_pressed.emit(code),
-                    pid=self._dev.pid,
-                    vid=self._dev.vid,
-                )
-                self._status.start()
-                self._last_keepalive = time.time()
-                self._last_mode_check = time.time()
-
-    def _check_wired_only_presence(self):
         try:
-            interface = self._wired_detector()
-        except Exception:
-            interface = None
-        if interface:
-            if not self._wired_only_present:
-                self._wired_only_present = True
-                self.wired_only_detected.emit({
-                    "connection": "wired-only",
-                    "product": interface.get("product_string") or "Wired-only SM809",
-                    "vid": interface.get("vendor_id"),
-                    "pid": interface.get("product_id"),
-                })
-        elif self._wired_only_present:
-            self._wired_only_present = False
-            self.wired_only_disconnected.emit()
+            ok = self._dev.connect()
+        except Exception as exc:
+            ok = False
+            _log.exception("connect raised")
+            self.error.emit(str(exc))
+        if ok:
+            self._is_connected = True
+            self._last_check = time.time()
+            self.connected.emit({
+                "connection": "wired",
+                "product": "SM809 (USB wired)",
+                "configurable": True,
+            })
+            self._emit_live()
 
-    def _maintain_connection(self):
+    def _maintain(self):
         now = time.time()
+        if now - self._last_check < 1.5:
+            return
+        self._last_check = now
+        if not self._dev.transport.connected and not self._dev.demo:
+            self._teardown()
+            return
+        # keepalive: a cheap enumeration, without re-sending config
+        if not self._dev.demo and not self._dev.present():
+            self._teardown()
 
-        # Periodic keep-alive poll (every _keepalive_interval, default 8s)
-        if now - self._last_keepalive >= self._keepalive_interval:
-            self._last_keepalive = now
-            with self._dev_lock:
-                if self._dev.is_open:
-                    if not self._dev.keepalive_poll():
-                        # Device is no longer responding
-                        self._teardown_device()
-                        return
-
-        # Periodic mode & liveness check (every 1.5s)
-        if now - self._last_mode_check >= 1.5:
-            self._last_mode_check = now
-            conn = self._dev.connection
-
-            # If connected via 2.4GHz dongle, but mouse is reported offline (link==0):
-            # check if mouse has connected via Bluetooth!
-            if conn == "2.4GHz" and self._status and self._status._alive is False:
-                modes = self._mode_detector(self._dev.vid)
-                if any(m["connection"] == "bluetooth" for m in modes):
-                    # Mouse switched to Bluetooth! Tear down 2.4GHz so next cycle connects BT
-                    self._teardown_device()
-                    return
-
-            # If connected via Bluetooth:
-            # 1. Check if wired USB cable was plugged in (wired takes priority)
-            # 2. Check if device is still present in detect_modes()
-            if conn == "bluetooth":
-                modes = self._mode_detector(self._dev.vid)
-                if any(m["connection"] == "wired" for m in modes):
-                    # Wired cable attached! Switch to wired
-                    self._teardown_device()
-                    return
-                if not any(m["connection"] == "bluetooth" for m in modes):
-                    # Bluetooth disconnected / went to sleep
-                    self._teardown_device()
-                    return
-
-    def _teardown_device(self):
-        was_connected = self._is_connected
+    def _teardown(self):
+        was = self._is_connected
         self._is_connected = False
-        if self._status:
-            try:
-                self._status.stop()
-            except Exception:
-                pass
-            self._status = None
-        with self._dev_lock:
-            try:
-                self._dev.close()
-            except Exception:
-                pass
-            # Reset pid to None so next open() runs auto-detect
-            self._dev.pid = None
-        if was_connected:
+        try:
+            self._dev.disconnect()
+        except Exception:
+            pass
+        if was:
             self.disconnected.emit()
 
     def _drain_queue(self):
         while not self._q.empty():
             try:
                 item = self._q.get_nowait()
-                if item is None:
-                    break
-                method, args, kwargs = item
-                self.command_done.emit(method, False)
             except queue.Empty:
                 break
+            if item is None:
+                continue
+            self.command_done.emit(item[0], False)
         self.busy_changed.emit(False)
 
-    def _on_alive_event(self, alive: bool):
-        self.alive_changed.emit(alive)
-        if not alive and getattr(self._dev, "connection", None) == "2.4GHz":
-            # If mouse went offline on 2.4GHz, fast-track mode check on next cycle
-            self._last_mode_check = 0.0
+    # -- commands -------------------------------------------------------------
+    def _apply_config(self, config, pid):
+        result = self._profiles.apply(pid, self._dev, config=config)
+        if result is None:
+            _log.error("apply requested for unknown profile %s", pid)
+            self.error.emit("unknown profile")
+            return False
+        for warning in result.warnings:
+            if warning in self._seen_warnings:
+                continue
+            self._seen_warnings.add(warning)
+            _log.warning("%s", warning)
+        if not result.ok:
+            _log.error("apply failed: %s", result.error or "unknown error")
+            self.error.emit(result.error or "apply failed")
+            return False
+        if result.changed_sections:
+            _log.info(
+                "applied %s (%d feature frame(s), %d block(s))",
+                ", ".join(result.changed_sections),
+                result.sent_packets,
+                result.sent_blocks,
+            )
+        else:
+            _log.debug("device already matches this profile; nothing sent")
+        self._emit_live()
+        return True
 
-    def _on_status_push(self, level, rate, raw):
-        # called from the StatusListener thread; Qt signals are thread-safe to emit
-        self.dpi_level_changed.emit(level)
-        if rate is not None:
-            self.rate_changed.emit(rate)
+    def _set_active_dpi(self, pid, values, selected):
+        idx = self._profiles.index_of(pid)
+        if idx < 0:
+            return False
+        prof = self._profiles.data.profiles[idx]
+        raw = [dpi_from_display(self._profiles.sensor, v) for v in values]
+        if raw:
+            prof.dpi_values = raw
+            prof.stage_count = max(1, min(8, len(raw)))
+        prof.stage = max(0, min(prof.stage_count - 1, int(selected)))
+        self._profiles.data.selected = idx
+        # Route through the store so it records the write generation (the UI's
+        # debounced flush then has nothing left to do).
+        self._profiles.save_profiles()
+        ok = self._dev.set_stage(prof.stage)
+        if ok:
+            self.dpi_level_changed.emit(prof.stage)
+        return ok
+
+    # -- live events ----------------------------------------------------------
+    def _emit_live(self):
+        try:
+            prof = self._dev.store.profile
+        except Exception:
+            return
+        self.dpi_level_changed.emit(int(prof.stage))
+        self.rate_changed.emit(rate_hz(prof.rate))
+
+    def _on_profile_changed(self, changed):
+        if changed == "disconnected":
+            # Also raised on the HID monitor thread; let the worker tear down.
+            self._lost.set()
+            return
+        if changed == "connected":
+            if not self._is_connected:
+                self._attempt_connect()
+            return
+        if changed == "mode":
+            # profile.mode uses the UI layer's own encoding:
+            # 0 = Office (slots 0-15), 1 = Game (slots 32-47).
+            try:
+                mode = int(self._dev.store.profile.mode)
+            except Exception:
+                mode = 0
+            self.mode_changed.emit(0 if mode == 0 else 1)
+            self._emit_live()
+            return
+        if changed in ("stage", "rate"):
+            self._emit_live()
+
+    def _on_lost(self):
+        """Transport callback -- runs on the ``sm809-monitor`` thread.
+
+        Never touch the device here.  The worker notices the flag at the top
+        of its loop and performs the single, lock-ordered teardown.
+        """
+        self._lost.set()

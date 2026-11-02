@@ -52,6 +52,9 @@ class Swatch(QFrame):
         return self._rgb
 
     def set_rgb(self, rgb):
+        rgb = tuple(rgb or ())
+        if rgb == tuple(self._rgb):
+            return              # profile switches often repeat the same colors
         self._rgb = rgb
         self._apply()
 
@@ -90,6 +93,9 @@ class StageRow(QFrame):
         # enable toggle
         self.toggle = QCheckBox()
         self.toggle.setChecked(enabled)
+        self.toggle.setToolTip(
+            "Stage enabled — uncheck to skip this stage when cycling DPI")
+        self.toggle.setAccessibleName(f"Enable DPI stage {index + 1}")
         self.toggle.toggled.connect(self._on_toggle)
         lay.addWidget(self.toggle)
 
@@ -206,6 +212,7 @@ class DpiPanel(QWidget):
         sub = QLabel("Configure resolution stages and their indicator colors. "
                      "Click a stage number to make it the active DPI.")
         sub.setProperty("panelSubtitle", "true")
+        sub.setWordWrap(True)
         root.addWidget(sub)
         root.addWidget(_hline())
 
@@ -251,11 +258,11 @@ class DpiPanel(QWidget):
     def _on_activate_requested(self, abs_index):
         """User clicked a stage number -> make it the active DPI on the device.
 
-        CONFIRMED via USB capture (session 9j): switching the live DPI is done
-        by re-sending the class-0x02 DPI config as a PAIR of packets with the
-        new `selected`. So we emit the enabled DPI values + the selected index
-        within that enabled list, and the controller calls set_active_dpi().
-        Updates the highlight immediately; the switch is not debounced.
+        The wired firmware adopts the stage only inside the vendor's DPI
+        sequence: the 0x11 table write, then 0x0B, then the 0x08 commit.  The
+        controller re-sends that sequence with the selected stage (a bare 0x0B
+        does not latch and left the sensor on the previous stage).  Updates the
+        highlight immediately; the switch is not debounced.
         """
         if self._suspend_apply:
             return
@@ -293,7 +300,11 @@ class DpiPanel(QWidget):
         """Highlight the stage at `level` (0-based absolute index among 8 rows)."""
         self._selected = level
         for i, row in enumerate(self.rows):
-            row.set_active(i == level)
+            want = (i == level)
+            # re-polish only rows whose state actually changed -- this runs on
+            # every device status push, not just on a real stage switch
+            if row._active != want:
+                row.set_active(want)
 
     def set_values(self, dpi, colors=None, enabled_count=None):
         """Set the stage DPI values (and optionally colors) from outside, e.g.

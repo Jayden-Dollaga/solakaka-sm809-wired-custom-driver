@@ -1,0 +1,102 @@
+// Program: MSDriver.dll
+// Function: FUN_100048d2
+// Entry: 100048d2
+// Body: 100048d2 - 10004a5c
+// Signature: int FUN_100048d2(DWORD param_1, char * param_2, DWORD param_3)
+
+
+int __cdecl FUN_100048d2(DWORD param_1,char *param_2,DWORD param_3)
+
+{
+  int *piVar1;
+  char *pcVar2;
+  char cVar3;
+  int iVar4;
+  char *pcVar5;
+  BOOL BVar6;
+  DWORD *pDVar7;
+  char local_418 [1028];
+  int local_14;
+  DWORD local_10;
+  DWORD local_c;
+  char *local_8;
+  
+  local_c = 0;
+  local_14 = 0;
+  if (param_3 == 0) {
+LAB_100048eb:
+    iVar4 = 0;
+  }
+  else {
+    piVar1 = &DAT_1000b4c0 + ((int)param_1 >> 5);
+    iVar4 = (param_1 & 0x1f) * 0x24;
+    if ((*(byte *)(*piVar1 + 4 + iVar4) & 0x20) != 0) {
+      FUN_100047fa(param_1,0,2);
+    }
+    if ((*(byte *)((undefined4 *)(*piVar1 + iVar4) + 1) & 0x80) == 0) {
+      BVar6 = WriteFile(*(HANDLE *)(*piVar1 + iVar4),param_2,param_3,&local_10,(LPOVERLAPPED)0x0);
+      if (BVar6 == 0) {
+        param_1 = GetLastError();
+      }
+      else {
+        param_1 = 0;
+        local_c = local_10;
+      }
+LAB_100049ba:
+      if (local_c != 0) {
+        return local_c - local_14;
+      }
+      if (param_1 == 0) goto LAB_10004a2c;
+      if (param_1 == 5) {
+        pDVar7 = FUN_10005881();
+        *pDVar7 = 9;
+        pDVar7 = FUN_1000588a();
+        *pDVar7 = 5;
+      }
+      else {
+        FUN_1000580e(param_1);
+      }
+    }
+    else {
+      local_8 = param_2;
+      param_1 = 0;
+      if (param_3 != 0) {
+        do {
+          pcVar5 = local_418;
+          do {
+            if (param_3 <= (uint)((int)local_8 - (int)param_2)) break;
+            pcVar2 = local_8 + 1;
+            cVar3 = *local_8;
+            local_8 = pcVar2;
+            if (cVar3 == '\n') {
+              local_14 = local_14 + 1;
+              *pcVar5 = '\r';
+              pcVar5 = pcVar5 + 1;
+            }
+            *pcVar5 = cVar3;
+            pcVar5 = pcVar5 + 1;
+          } while ((int)pcVar5 - (int)local_418 < 0x400);
+          BVar6 = WriteFile(*(HANDLE *)(*piVar1 + iVar4),local_418,(int)pcVar5 - (int)local_418,
+                            &local_10,(LPOVERLAPPED)0x0);
+          if (BVar6 == 0) {
+            param_1 = GetLastError();
+            goto LAB_100049ba;
+          }
+          local_c = local_c + local_10;
+          if (((int)local_10 < (int)pcVar5 - (int)local_418) ||
+             (param_3 <= (uint)((int)local_8 - (int)param_2))) goto LAB_100049ba;
+        } while( true );
+      }
+LAB_10004a2c:
+      if (((*(byte *)(*piVar1 + 4 + iVar4) & 0x40) != 0) && (*param_2 == '\x1a')) goto LAB_100048eb;
+      pDVar7 = FUN_10005881();
+      *pDVar7 = 0x1c;
+      pDVar7 = FUN_1000588a();
+      *pDVar7 = 0;
+    }
+    iVar4 = -1;
+  }
+  return iVar4;
+}
+
+

@@ -1,0 +1,20 @@
+[
+  {
+    "id": "44ad596c",
+    "name": "Rapid Demo",
+    "events": [
+      {
+        "type": "key",
+        "keycode": 4,
+        "down": true,
+        "next_delay": 20
+      },
+      {
+        "type": "key",
+        "keycode": 4,
+        "down": false,
+        "next_delay": 0
+      }
+    ]
+  }
+]

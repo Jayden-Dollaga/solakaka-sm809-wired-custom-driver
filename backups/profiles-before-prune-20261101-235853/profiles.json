@@ -1,0 +1,90 @@
+{
+  "active": "80825a94",
+  "profiles": [
+    {
+      "id": "80825a94",
+      "name": "Delta Force",
+      "match_rules": [],
+      "created": 0
+    },
+    {
+      "id": "98e664b5",
+      "name": "Valorant",
+      "match_rules": [],
+      "created": 1
+    },
+    {
+      "id": "96377bb2",
+      "name": "NIkke",
+      "match_rules": [],
+      "created": 2
+    },
+    {
+      "id": "c3bfa51a",
+      "name": "ubg\\roket",
+      "match_rules": [],
+      "created": 3
+    },
+    {
+      "id": "85578122",
+      "name": "Roket League",
+      "match_rules": [],
+      "created": 4
+    },
+    {
+      "id": "a5c7f084",
+      "name": "Project Apex",
+      "match_rules": [],
+      "created": 5
+    },
+    {
+      "id": "05c963a5",
+      "name": "TTK",
+      "match_rules": [],
+      "created": 6
+    },
+    {
+      "id": "77bfa35d",
+      "name": "TSB/Rival",
+      "match_rules": [],
+      "created": 7
+    },
+    {
+      "id": "f36f9a05",
+      "name": "osu",
+      "match_rules": [],
+      "created": 8
+    },
+    {
+      "id": "21407aed",
+      "name": "duck works",
+      "match_rules": [],
+      "created": 9
+    },
+    {
+      "id": "5f063ab5",
+      "name": "BloodStike",
+      "match_rules": [],
+      "created": 10
+    },
+    {
+      "id": "5ae986e2",
+      "name": "Farlight",
+      "match_rules": [],
+      "created": 11
+    },
+    {
+      "id": "26a01da5",
+      "name": "Profile13",
+      "match_rules": [],
+      "created": 12
+    },
+    {
+      "id": "da4b554c",
+      "name": "Profile14",
+      "match_rules": [],
+      "created": 13
+    }
+  ],
+  "settings": {}
+}

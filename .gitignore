@@ -86,9 +86,12 @@ $RECYCLE.BIN/
 *.bak
 *.tmp
 *.log
+
+logs/
 CLAUDE.md
 journal.txt
 
-SM809 mouse Software/
+.venv
+.pytest_cache
+__pycache__DW
 original_extracted/
-analysis/

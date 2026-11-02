@@ -10,19 +10,27 @@ A macro is a list of timed key/mouse/consumer events (sm809pro.macros format).
 The EVENTS area is a web-driver-style table: one row per atomic event with an
 inline Type (Down/Up/Delay), Key, Delay(ms) and per-row reorder/delete actions.
 "Tap" inserts a Down+Up pair (two rows) so each half can be edited separately.
-Recording captures real inter-event timing; Stop (not Esc) ends a recording.
+Recording captures real inter-event timing, including keyboard input and
+system-wide mouse-button clicks (left/right/middle/back/forward), so a sequence
+can be recorded while clicking in the application being automated. Stop (not
+Esc) ends a recording.
 """
 
+import os
+
 from PySide6.QtCore import Qt, Signal, QElapsedTimer, QEvent
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtGui import QColor, QPalette, QShortcut, QKeySequence
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget,
     QPushButton, QLineEdit, QComboBox, QSpinBox, QFrame,
     QScrollArea, QSizePolicy, QTableWidget, QTableWidgetItem,
-    QHeaderView, QAbstractItemView, QToolButton,
+    QHeaderView, QAbstractItemView, QToolButton, QMenu,
+    QFileDialog, QInputDialog, QMessageBox,
 )
 
 from .. import theme
+from ..macro_file import FILE_FILTER, MacroFileError, load_macro, save_macro, suggest_name
+from ..mouse_hook import MouseHook
 from ..widgets.controls import Card
 from sm809pro import actions as A
 from sm809pro import macros as M
@@ -85,7 +93,8 @@ def _build_usage_names():
         usage = (0x39 + i) if i <= 12 else (0x68 + (i - 13))
         n[usage] = f"F{i}"
     n.update({
-        0xE0: "Ctrl", 0xE1: "Shift", 0xE2: "Alt", 0xE3: "Win",
+        0xE0: "L Ctrl", 0xE1: "L Shift", 0xE2: "L Alt", 0xE3: "L Win",
+        0xE4: "R Ctrl", 0xE5: "R Shift", 0xE6: "R Alt", 0xE7: "R Win",
         0x28: "Enter", 0x29: "Esc", 0x2A: "Backspace", 0x2B: "Tab", 0x2C: "Space",
         0x4C: "Delete", 0x49: "Insert", 0x4A: "Home", 0x4D: "End",
         0x4B: "PgUp", 0x4E: "PgDn", 0x46: "PrtSc", 0x48: "Pause",
@@ -113,7 +122,12 @@ def usage_label(u):
 
 
 def _key_insert_choices():
-    out = [("Ctrl", 0xE0), ("Shift", 0xE1), ("Alt", 0xE2), ("Win", 0xE3)]
+    out = [
+        ("Left Ctrl", 0xE0), ("Left Shift", 0xE1), ("Left Alt", 0xE2),
+        ("Left Win", 0xE3),
+        ("Right Ctrl", 0xE4), ("Right Shift", 0xE5), ("Right Alt", 0xE6),
+        ("Right Win", 0xE7),
+    ]
     out += [(chr(ord("A") + i), 0x04 + i) for i in range(26)]
     out += [(str(d), A.HID[str(d)]) for d in [1, 2, 3, 4, 5, 6, 7, 8, 9, 0]]
     out += [
@@ -151,7 +165,6 @@ INSERT_TYPES = [
     ("Mouse - tap", ("mouse", "tap")),
     ("Mouse - hold (down)", ("mouse", "down")),
     ("Mouse - release (up)", ("mouse", "up")),
-    ("Media - tap", ("consumer", "tap")),
     ("Delay (pause)", ("delay", "tap")),
 ]
 
@@ -206,7 +219,8 @@ class _Recorder(QFrame):
     """
     keyEvent = Signal(int, bool)
 
-    _IDLE = 'Click "Record Keys", then type. Captures real timing. Click Stop to finish.'
+    _IDLE = ('Click "Record Input", then type or click the mouse — including '
+             'in another app. Captures real timing. Click Stop to finish.')
 
     def __init__(self):
         super().__init__()
@@ -220,10 +234,15 @@ class _Recorder(QFrame):
         self.status.setWordWrap(True)
         lay.addWidget(self.status)
 
-    def start(self):
+    def start(self, mouse=True):
         self.setFocus()
         self.grabKeyboard()
-        self.status.setText(f"{DOT} Recording {DASH} type your keys{ELLIP} (click Stop to finish)")
+        tail = " or click any mouse button" if mouse else ""
+        if not mouse:
+            tail = " (mouse capture unavailable)"
+        self.status.setText(
+            f"{DOT} Recording {DASH} type your keys{tail}{ELLIP} "
+            "(click Stop to finish)")
         self.status.setStyleSheet(f"color: {theme.ACCENT};")
 
     def stop(self):
@@ -257,6 +276,8 @@ class MacroPanel(QWidget):
         self._suspend = False
         self._recording = False
         self._rec_timer = QElapsedTimer()
+        self._mouse_hook = MouseHook(self)
+        self._mouse_hook.mouseEvent.connect(self._on_record_mouse)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(28, 24, 28, 24)
@@ -268,6 +289,7 @@ class MacroPanel(QWidget):
         sub = QLabel("Build a named macro here, then bind a button to it in the "
                      "Buttons tab. Macros upload to the mouse when assigned.")
         sub.setProperty("panelSubtitle", "true")
+        sub.setWordWrap(True)
         root.addWidget(sub)
         root.addWidget(self._sep())
 
@@ -287,12 +309,6 @@ class MacroPanel(QWidget):
         f.setProperty("sep", "true")
         f.setFrameShape(QFrame.NoFrame)
         return f
-
-    @staticmethod
-    def _unit(text):
-        lbl = QLabel(text)
-        lbl.setProperty("unit", "true")
-        return lbl
 
     def _cur(self):
         return self.store.get(self._cur_id) if self._cur_id else None
@@ -320,7 +336,7 @@ class MacroPanel(QWidget):
     # -- left column ----------------------------------------------------------
     def _build_left(self):
         col = QWidget()
-        col.setFixedWidth(244)
+        col.setFixedWidth(224)
         lay = QVBoxLayout(col)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(10)
@@ -331,7 +347,12 @@ class MacroPanel(QWidget):
 
         self.macro_list = QListWidget()
         self.macro_list.currentRowChanged.connect(self._on_list_row)
+        self.macro_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.macro_list.customContextMenuRequested.connect(self._list_menu)
         lay.addWidget(self.macro_list, 1)
+        # F2 renames the selected macro; it works while the list has focus.
+        QShortcut(QKeySequence("F2"), self.macro_list,
+                  activated=self.rename_macro_dialog)
 
         row = QHBoxLayout()
         row.setSpacing(8)
@@ -339,12 +360,31 @@ class MacroPanel(QWidget):
         new_btn.clicked.connect(self.new_macro)
         del_btn = QPushButton("Delete")
         del_btn.clicked.connect(self.delete_macro)
+        menu_btn = QToolButton()
+        menu_btn.setText(ELLIP)
+        menu_btn.setToolTip("Rename, import or export a macro")
+        menu_btn.setPopupMode(QToolButton.InstantPopup)
+        menu = QMenu(menu_btn)
+        menu.addAction("Rename…", self.rename_macro_dialog)
+        menu.addSeparator()
+        menu.addAction("Import .mbin…", self.import_macro_dialog)
+        menu.addAction("Export .mbin…", self.export_macro_dialog)
+        menu.addAction("Export protected .mbin…",
+                       lambda: self.export_macro_dialog(protected=True))
+        menu_btn.setMenu(menu)
         row.addWidget(new_btn)
         row.addWidget(del_btn)
+        row.addWidget(menu_btn)
         lay.addLayout(row)
 
+        self.status = QLabel("")
+        self.status.setProperty("cardHint", "true")
+        self.status.setWordWrap(True)
+        lay.addWidget(self.status)
+
         hint = QLabel("Saved automatically. Assign a macro to a button in the "
-                      "Buttons tab to load it onto the mouse.")
+                      "Buttons tab to load it onto the mouse. Import/Export "
+                      "uses the original driver's .mbin format.")
         hint.setProperty("cardHint", "true")
         hint.setWordWrap(True)
         lay.addWidget(hint)
@@ -363,12 +403,14 @@ class MacroPanel(QWidget):
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("Macro name")
         self.name_edit.textChanged.connect(self._on_name_changed)
+        self.name_edit.editingFinished.connect(self._commit_name)
         top.addWidget(self.name_edit, 1)
         lay.addLayout(top)
 
         build = Card("BUILD MACRO")
-        self.record_btn = QPushButton(f"{DOT} Record Keys")
+        self.record_btn = QPushButton(f"{DOT} Record Input")
         self.record_btn.clicked.connect(self._toggle_record)
+        self._mouse_hook.set_ignore_widgets(self.record_btn)
         build.add(self.record_btn)
         self.recorder = _Recorder()
         self.recorder.keyEvent.connect(self._on_record_key)
@@ -376,21 +418,39 @@ class MacroPanel(QWidget):
 
         build.add(self._sep())
 
-        ins = QHBoxLayout()
-        ins.setSpacing(8)
+        # Two lines per insert: the event pickers on one, the timing and the
+        # button on the next.  One long line was wider than the editor at the
+        # default window size, so "Insert" and the delay were clipped.
+        pick = QHBoxLayout()
+        pick.setSpacing(8)
         self.type_combo = _NoWheelCombo()
+        self.type_combo.setObjectName("macroPicker")
         for label, data in INSERT_TYPES:
             self.type_combo.addItem(label, data)
         self.type_combo.currentIndexChanged.connect(self._on_type_changed)
-        ins.addWidget(self.type_combo, 1)
+        self.type_combo.setToolTip(
+            "What the inserted event does: press, release or wait")
+        pick.addWidget(self.type_combo, 1)
         self.detail_combo = _NoWheelCombo()
-        ins.addWidget(self.detail_combo, 1)
+        self.detail_combo.setObjectName("macroPicker")
+        self.detail_combo.setToolTip("Key, mouse button or media key to send")
+        pick.addWidget(self.detail_combo, 1)
+        build.add(pick)
+
+        ins = QHBoxLayout()
+        ins.setSpacing(8)
+        ins.addWidget(QLabel("Delay"))
         self.delay_spin = _NoWheelSpin()
         self.delay_spin.setRange(0, 4095)
         self.delay_spin.setValue(INSERT_DEFAULT_DELAY)
+        self.delay_spin.setSuffix(" ms")
+        self.delay_spin.setFixedWidth(108)
+        self.delay_spin.setToolTip(
+            "Wait stored with this event, in milliseconds")
         ins.addWidget(self.delay_spin)
-        ins.addWidget(self._unit("ms"))
-        add_btn = QPushButton("Insert")
+        ins.addStretch(1)
+        add_btn = QPushButton("Insert event")
+        add_btn.setToolTip("Add this event after the selected row")
         add_btn.clicked.connect(self._do_insert)
         ins.addWidget(add_btn)
         build.add(ins)
@@ -401,15 +461,24 @@ class MacroPanel(QWidget):
         self.text_edit.setPlaceholderText(f"Type text to insert as keystrokes{ELLIP}")
         self.text_edit.returnPressed.connect(self._do_add_text)
         txt.addWidget(self.text_edit, 1)
+        build.add(txt)
+
+        txt_opts = QHBoxLayout()
+        txt_opts.setSpacing(8)
+        txt_opts.addWidget(QLabel("Per key"))
         self.text_delay = _NoWheelSpin()
         self.text_delay.setRange(1, 4095)
         self.text_delay.setValue(TEXT_DEFAULT_DELAY)
-        txt.addWidget(self.text_delay)
-        txt.addWidget(self._unit("ms/key"))
-        text_btn = QPushButton("Add Text")
+        self.text_delay.setSuffix(" ms")
+        self.text_delay.setFixedWidth(108)
+        self.text_delay.setToolTip(
+            "Typing speed: gap between each generated keystroke, in milliseconds")
+        txt_opts.addWidget(self.text_delay)
+        txt_opts.addStretch(1)
+        text_btn = QPushButton("Add text")
         text_btn.clicked.connect(self._do_add_text)
-        txt.addWidget(text_btn)
-        build.add(txt)
+        txt_opts.addWidget(text_btn)
+        build.add(txt_opts)
 
         lay.addWidget(build)
 
@@ -444,10 +513,10 @@ class MacroPanel(QWidget):
         hh.setSectionResizeMode(3, QHeaderView.Fixed)
         hh.setSectionResizeMode(4, QHeaderView.Fixed)
         hh.setHighlightSections(False)
-        self.events_table.setColumnWidth(0, 40)
-        self.events_table.setColumnWidth(1, 92)
-        self.events_table.setColumnWidth(3, 100)
-        self.events_table.setColumnWidth(4, 108)
+        self.events_table.setColumnWidth(0, 34)
+        self.events_table.setColumnWidth(1, 82)
+        self.events_table.setColumnWidth(3, 84)
+        self.events_table.setColumnWidth(4, 92)
         # selected-row highlight uses the app's "active surface" color; the
         # in-cell widgets are transparent (theme) so this shows behind them
         pal = self.events_table.palette()
@@ -460,7 +529,8 @@ class MacroPanel(QWidget):
         hint = QLabel("Each row is one event. Switch Down/Up/Delay in the Type "
                       "column, edit the key and timing inline, reorder or remove with "
                       "the row actions. Insert / Tap / Add Text add events after the "
-                      "selected row.")
+                      "selected row. Recording captures mouse buttons system-wide; "
+                      "the Stop button's own click is ignored.")
         hint.setProperty("cardHint", "true")
         hint.setWordWrap(True)
         lay.addWidget(hint)
@@ -474,8 +544,11 @@ class MacroPanel(QWidget):
         return scroll
 
     # -- library list ---------------------------------------------------------
-    def _item_text(self, m):
-        return f"{m['name']}  ({len(m['events'])})"
+    @staticmethod
+    def _item_text(m):
+        folder = (m.get("folder") or "").strip()
+        prefix = f"{folder} / " if folder else ""
+        return f"{prefix}{m['name']}  ({len(m['events'])})"
 
     def _refresh_list(self):
         self.macro_list.blockSignals(True)
@@ -492,7 +565,8 @@ class MacroPanel(QWidget):
             it.setText(self._item_text(m))
 
     def new_macro(self):
-        m = self.store.add(f"Macro {len(self.store.all()) + 1}")
+        name = self.store.unique_name(f"Macro {len(self.store.all()) + 1}")
+        m = self.store.add(name)
         self._refresh_list()
         self.macro_list.setCurrentRow(self.store.index_of(m["id"]))
         self.library_changed.emit()
@@ -516,6 +590,110 @@ class MacroPanel(QWidget):
         self._cur_id = macros[row]["id"] if 0 <= row < len(macros) else None
         self._load_editor()
 
+    # -- rename / import / export --------------------------------------------
+    def _list_menu(self, pos):
+        item = self.macro_list.itemAt(pos)
+        if item is not None:
+            self.macro_list.setCurrentRow(self.macro_list.row(item))
+        has_current = self._cur() is not None
+        menu = QMenu(self)
+        rename = menu.addAction("Rename…", self.rename_macro_dialog)
+        rename.setEnabled(has_current)
+        menu.addSeparator()
+        menu.addAction("Import .mbin…", self.import_macro_dialog)
+        export = menu.addAction("Export .mbin…", self.export_macro_dialog)
+        export.setEnabled(has_current)
+        protected = menu.addAction(
+            "Export protected .mbin…",
+            lambda: self.export_macro_dialog(protected=True))
+        protected.setEnabled(has_current)
+        menu.addSeparator()
+        delete = menu.addAction("Delete", self.delete_macro)
+        delete.setEnabled(has_current)
+        menu.exec(self.macro_list.viewport().mapToGlobal(pos))
+
+    def rename_macro_dialog(self):
+        m = self._cur()
+        if m is None:
+            return
+        name, ok = QInputDialog.getText(
+            self, "Rename macro", "Macro name:", text=m["name"])
+        if not ok:
+            return
+        name = self.store.unique_name(name, exclude_id=m["id"])
+        if name == m["name"]:
+            return
+        self.store.rename(m["id"], name)
+        self._suspend = True
+        self.name_edit.setText(name)
+        self._suspend = False
+        self._refresh_list_item()
+        self.status.setText(f"Renamed to “{name}”.")
+        self.library_changed.emit()
+
+    def _commit_name(self):
+        """Make the inline name field unique once editing finishes."""
+        m = self._cur()
+        if m is None or self._suspend:
+            return
+        if not self.name_edit.text().strip():
+            # a blank field never renames anything; put the stored name back
+            self._suspend = True
+            self.name_edit.setText(m["name"])
+            self._suspend = False
+            return
+        name = self.store.unique_name(m["name"], exclude_id=m["id"])
+        if name != m["name"]:
+            self.store.rename(m["id"], name)
+            self._suspend = True
+            self.name_edit.setText(name)
+            self._suspend = False
+            self._refresh_list_item()
+            self.library_changed.emit()
+
+    def import_macro_dialog(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import macro", "", FILE_FILTER)
+        if not path:
+            return
+        try:
+            data = load_macro(path)
+        except (OSError, MacroFileError) as exc:
+            QMessageBox.warning(self, "Import macro", str(exc))
+            return
+        name = self.store.unique_name(data["name"])
+        m = self.store.add(name, data["events"], loop=data.get("loop", 1),
+                           folder=data.get("folder", ""),
+                           protected=data.get("protected", False))
+        self._refresh_list()
+        self.macro_list.setCurrentRow(self.store.index_of(m["id"]))
+        self.status.setText(
+            f"Imported “{os.path.basename(path)}” as “{name}” "
+            f"({len(m['events'])} events).")
+        self.library_changed.emit()
+
+    def export_macro_dialog(self, protected=False):
+        m = self._cur()
+        if m is None:
+            QMessageBox.information(self, "Export macro",
+                                    "Select a macro first.")
+            return
+        start = os.path.join(os.path.expanduser("~"), suggest_name(m))
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export macro", start, FILE_FILTER)
+        if not path:
+            return
+        if not path.lower().endswith(".mbin"):
+            path += ".mbin"
+        try:
+            save_macro(path, m, protected=protected)
+        except (OSError, MacroFileError) as exc:
+            QMessageBox.warning(self, "Export macro", str(exc))
+            return
+        kind = "protected " if protected else ""
+        self.status.setText(
+            f"Exported {kind}“{m['name']}” to {os.path.basename(path)}.")
+
     # -- editor load ----------------------------------------------------------
     def _load_editor(self):
         self._suspend = True
@@ -537,6 +715,8 @@ class MacroPanel(QWidget):
     def _on_name_changed(self, text):
         if self._suspend or not self._cur_id:
             return
+        if not text.strip():
+            return                      # keep the stored name until editing ends
         self.store.rename(self._cur_id, text)
         self._refresh_list_item()
         self.library_changed.emit()
@@ -808,19 +988,36 @@ class MacroPanel(QWidget):
         self._rec_last_t = None
         self._rec_timer.restart()
         self.record_btn.setText(f"{SQUARE} Stop Recording")
-        self.recorder.start()
+        mouse_ok = self._mouse_hook.start()
+        self.recorder.start(mouse=mouse_ok)
 
     def _stop_recording(self):
         if not self._recording:
             return
         self._recording = False
+        # Unhook before the final commit: releasing the Stop button itself must
+        # never reach the macro (the hook also ignores this process).
+        self._mouse_hook.stop()
         self.recorder.stop()
-        self.record_btn.setText(f"{DOT} Record Keys")
+        self.record_btn.setText(f"{DOT} Record Input")
         m = self._cur()
         if m and len(m["events"]) > self._rec_start_idx:
             self._commit(select_index=len(m["events"]) - 1)
 
     def _on_record_key(self, usage, down):
+        self._record_event({"type": "key", "keycode": int(usage),
+                            "down": bool(down), "next_delay": 0})
+
+    def _on_record_mouse(self, button, down):
+        """Intake for the system-wide mouse hook (buttons 1..5)."""
+        button = int(button)
+        if button not in MOUSE_LABELS:
+            return
+        self._record_event({"type": "mouse", "button": button,
+                            "down": bool(down), "next_delay": 0})
+
+    def _record_event(self, ev):
+        """Append one recorded event and back-fill the previous delay."""
         if not self._recording:
             return
         m = self._cur()
@@ -844,7 +1041,6 @@ class MacroPanel(QWidget):
                 sb.blockSignals(True)
                 sb.setValue(gap)
                 sb.blockSignals(False)
-        ev = {"type": "key", "keycode": usage, "down": down, "next_delay": 0}
         evs.append(ev)
         self._append_row(ev)
         self.events_table.scrollToBottom()
@@ -854,4 +1050,13 @@ class MacroPanel(QWidget):
     def hideEvent(self, e):
         if self._recording:
             self._stop_recording()
+        else:
+            self._mouse_hook.stop()
         super().hideEvent(e)
+
+    def closeEvent(self, e):
+        if self._recording:
+            self._stop_recording()
+        else:
+            self._mouse_hook.stop()
+        super().closeEvent(e)

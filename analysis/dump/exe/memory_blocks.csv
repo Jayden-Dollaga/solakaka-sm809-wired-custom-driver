@@ -1,0 +1,8 @@
+name,start,end,size,initialized,read,write,execute,volatile,type
+"Headers","00400000","004003ff",1024,true,true,false,false,false,"Default"
+".text","00401000","00423fff",143360,true,true,false,true,false,"Default"
+".rdata","00424000","00431fff",57344,true,true,false,false,false,"Default"
+".data","00432000","0046efff",249856,true,true,true,false,false,"Default"
+".rsrc","0046f000","004b2fff",278528,true,true,false,false,false,"Default"
+".reloc","004b3000","004b6fff",16384,true,true,false,false,false,"Default"
+"tdb","ffdff000","ffdfffff",4096,true,true,true,false,false,"Default"

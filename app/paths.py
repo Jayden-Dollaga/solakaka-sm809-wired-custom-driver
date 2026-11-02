@@ -28,6 +28,20 @@ def app_dir():
     return _PROJECT_ROOT
 
 
+def config_dir():
+    """Where profiles.json / macros.json live.
+
+    Normally ``<app dir>/config`` so the settings travel with the app.  When
+    ``SM809_DATA_DIR`` overrides the device data folder (tests, demo sandboxes,
+    a second portable copy) the host-side config lives inside that folder too,
+    so a scratch data directory never writes into the real profile library.
+    """
+    override = os.environ.get("SM809_DATA_DIR")
+    if override:
+        return os.path.join(os.path.abspath(override), "config")
+    return os.path.join(app_dir(), "config")
+
+
 def resource_path(*parts):
     base = getattr(sys, "_MEIPASS", None) or _PROJECT_ROOT
     return os.path.join(base, *parts)

@@ -22,6 +22,12 @@ BAD       = "#F85149"
 FONT_UI = '"Geist", "Segoe UI Variable", "Segoe UI", "Inter", system-ui, sans-serif'
 FONT_MONO = '"Cascadia Code", "Cascadia Mono", "Consolas", "JetBrains Mono", "SF Mono", monospace'
 
+# Dark tick drawn inside a checked checkbox (QSS needs a real image; a filled
+# square alone reads like a colour swatch, especially on the DPI rows).
+from .paths import resource_path
+
+CHECK_ICON = resource_path("images", "check.png").replace("\\", "/")
+
 
 try:
     from PySide6.QtGui import QPalette, QColor
@@ -196,6 +202,29 @@ def stylesheet() -> str:
         color: {WARN};
     }}
 
+    /* ---- Manual Apply (top bar, --verbose developer mode) ---- */
+    QPushButton#applyBtn {{
+        background: transparent;
+        border: 1px solid {ACCENT};
+        border-radius: 6px;
+        padding: 6px 16px;
+        color: {ACCENT};
+        font-weight: 600;
+    }}
+    QPushButton#applyBtn:hover {{
+        background: {SURFACE_2};
+        border-color: #ff7d4d;
+        color: #ff7d4d;
+    }}
+    QPushButton#applyBtn[pending="true"] {{
+        background: {ACCENT};
+        border-color: {ACCENT};
+        color: #1a1008;
+    }}
+    QPushButton#applyBtn[pending="true"]:hover {{
+        background: #ff7d4d;
+    }}
+
     /* ---- Battery / status pill ---- */
     QLabel#battery {{
         font-family: {FONT_MONO};
@@ -282,6 +311,9 @@ def stylesheet() -> str:
     QPushButton:pressed {{
         background: {SURFACE};
     }}
+    QPushButton[compact="true"] {{
+        padding: 8px 12px;
+    }}
     QPushButton#primary {{
         background: {ACCENT};
         border: 1px solid {ACCENT};
@@ -312,6 +344,8 @@ def stylesheet() -> str:
     QCheckBox::indicator:checked {{
         background: {ACCENT};
         border-color: {ACCENT};
+        image: url("{CHECK_ICON}");
+        image-position: center;
     }}
 
     /* ---- Combo boxes ---- */
@@ -333,6 +367,8 @@ def stylesheet() -> str:
 
     /* ---- Profile selector (rail) ---- */
     QComboBox#profileCombo {{ min-width: 0; }}
+    /* Macro insert pickers sit two-up in a narrow editor; let them share it. */
+    QComboBox#macroPicker {{ min-width: 0; }}
     QToolButton#profileMenuBtn {{
         background: {SURFACE_2};
         border: 1px solid {BORDER};
@@ -404,6 +440,44 @@ def stylesheet() -> str:
         font-weight: 600;
         color: {ACCENT};
     }}
+    /* Light page mirrors the vendor's three bracketed section headers. */
+    QLabel[sectionTitle="true"] {{
+        color: {TEXT_DIM};
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 1.2px;
+        padding-top: 4px;
+    }}
+    QLabel[paramLabel="true"] {{
+        color: {TEXT};
+        font-size: 12px;
+        font-weight: 600;
+    }}
+    QLabel[endpoint="true"] {{
+        color: {TEXT_DIM};
+        font-size: 10px;
+    }}
+    QRadioButton {{
+        spacing: 8px;
+        color: {TEXT};
+    }}
+    QRadioButton:hover {{
+        color: {TEXT};
+    }}
+    QRadioButton::indicator {{
+        width: 14px;
+        height: 14px;
+        border-radius: 7px;
+        border: 1px solid {BORDER};
+        background: {SURFACE_2};
+    }}
+    QRadioButton::indicator:hover {{
+        border-color: {TEXT_DIM};
+    }}
+    QRadioButton::indicator:checked {{
+        background: {ACCENT};
+        border: 3px solid {SURFACE_2};
+    }}
 
     /* ---- Generic lists (macro library, event list) ---- */
     QListWidget {{
@@ -427,18 +501,18 @@ def stylesheet() -> str:
         color: {TEXT};
         border-left: 2px solid {ACCENT};
     }}
-    QTableWidget#macroEvents {{
+    QTableWidget#macroEvents, QTableWidget#gunRows {{
         background: {SURFACE};
         border: 1px solid {BORDER};
         border-radius: 8px;
         outline: 0;
         gridline-color: {BORDER};
     }}
-    QTableWidget#macroEvents::item {{
+    QTableWidget#macroEvents::item, QTableWidget#gunRows::item {{
         padding: 0px;
         color: {TEXT};
     }}
-    QTableWidget#macroEvents::item:selected {{
+    QTableWidget#macroEvents::item:selected, QTableWidget#gunRows::item:selected {{
         background: {SURFACE_2};
         color: {ACCENT};
     }}
@@ -447,7 +521,7 @@ def stylesheet() -> str:
         padding: 4px 6px;
         background: transparent;
     }}
-    QTableWidget#macroEvents QSpinBox {{
+    QTableWidget#macroEvents QSpinBox, QTableWidget#gunRows QSpinBox {{
         min-width: 0;
         padding: 4px 4px;
         background: transparent;
@@ -529,7 +603,9 @@ def stylesheet() -> str:
         border: none;
         background: transparent;
     }}
-    QScrollArea > QWidget#qt_scrollarea_viewport {{
+    QScrollArea > QWidget#qt_scrollarea_viewport,
+    QWidget#scrollHolder,
+    QWidget#gunEditor {{
         background: transparent;
     }}
     """

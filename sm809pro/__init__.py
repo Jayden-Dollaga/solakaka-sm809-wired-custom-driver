@@ -1,30 +1,14 @@
-"""
-sm809pro -- a clean, validated driver library for the SOLAKAKA SM809 Pro mouse.
+"""SM809 *wired* adapter package for the Solakaka studio UI.
 
-Public API:
-    from sm809pro import SM809Pro, actions, macros, protocol
-    from sm809pro.status import StatusListener
-
-The full HID protocol was reverse-engineered from the vendor WebHID driver, the
-official GamingMS.exe (via IDA), and validated on live hardware.
+The reference application was written for the wireless SM809 Pro. This package
+keeps its import surface (``actions``, ``defaults``, ``macros``, ``protocol``)
+but every translation now targets the wired firmware in :mod:`wired`.
 """
 
-from . import protocol
-from . import actions
-from . import macros
-from . import defaults
-from .device import SM809Pro, pick_control_interface, detect_modes, choose_mode
+from __future__ import annotations
 
-__version__ = "0.1.0"
+from . import actions, defaults, macros, protocol
 
-__all__ = [
-    "SM809Pro",
-    "pick_control_interface",
-    "detect_modes",
-    "choose_mode",
-    "protocol",
-    "actions",
-    "macros",
-    "defaults",
-    "__version__",
-]
+__version__ = "1.0.0-wired"
+
+__all__ = ["actions", "defaults", "macros", "protocol", "__version__"]

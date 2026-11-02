@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
 """
-run_app.py -- launch the SM809 Pro desktop app.
+run_app.py -- launch the SM809 Wired Studio desktop app.
 
-    python run_app.py
+    python run_app.py            # normal launch (wired SM809)
+    python run_app.py --demo     # offline demo: no USB I/O is performed
 
 Single-instance: the app lives in the tray, so launching it again does NOT start
 a second copy -- it signals the running instance to show its window and exits.
 """
+import logging
+import platform
 import sys
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QSplashScreen
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 from app import theme
+from app.logging_setup import setup_logging
 from app.main_window import MainWindow, app_icon
 
-_INSTANCE_KEY = "SM809Pro_single_instance"
+_INSTANCE_KEY = "SM809WiredStudio_single_instance"
 
 
 def _hand_off_if_running() -> bool:
@@ -57,12 +62,26 @@ def _listen_for_relaunch(win) -> QLocalServer:
 
 
 def main():
+    # Diagnostics first: Qt's own warnings (and anything that fails during
+    # startup) should land in logs/studio.log, not a bare stderr line.
+    verbose = ("--verbose" in sys.argv or "-v" in sys.argv)
+    log_path = setup_logging(verbose=verbose)
+    log = logging.getLogger("sm809.app")
+    demo = "--demo" in sys.argv
+    log.info("SM809 Wired Studio starting (demo=%s)", demo)
+    log.info("python %s | %s", platform.python_version(), platform.platform())
+    from app.paths import app_dir, config_dir
+    log.info("app dir: %s", app_dir())
+    log.info("profile config: %s", config_dir())
+    if log_path:
+        log.info("diagnostics: %s", log_path)
+
     # crisp rendering on high-dpi displays
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
     app = QApplication(sys.argv)
-    app.setApplicationName("SM809 Pro")
+    app.setApplicationName("SM809 Wired Studio")
     app.setWindowIcon(app_icon())
 
     # if we're a second launch, surface the running instance and quit
@@ -73,16 +92,32 @@ def main():
     if pal is not None:
         app.setPalette(pal)
     app.setStyleSheet(theme.stylesheet())
-    win = MainWindow()
+
+    # Qt's first widget/style warm-up can take a couple of seconds on Windows;
+    # show a splash so startup never looks frozen.
+    splash_pm = QPixmap(380, 110)
+    splash_pm.fill(QColor(theme.BG))
+    splash = QSplashScreen(splash_pm)
+    splash.showMessage("SM809 Wired Studio\nStarting\u2026",
+                       Qt.AlignCenter, QColor(theme.ACCENT))
+    splash.show()
+    app.processEvents()
+
+    # --demo keeps every write in memory/on disk only; no USB traffic happens.
+    # --verbose switches to manual apply: edits reach the mouse only when the
+    # top-bar Apply button is clicked (vendor-driver behaviour, for debugging).
+    win = MainWindow(demo=demo, verbose=verbose)
     win._single_instance_server = _listen_for_relaunch(win)   # keep a reference
     # --minimized / --tray (used by "Start with Windows"): stay in the tray on
     # launch. Only honoured when a tray exists, else show so it's not unreachable.
     minimized = ("--minimized" in sys.argv or "--tray" in sys.argv)
     if minimized and getattr(win, "tray", None) is not None:
-        win.tray.showMessage("SM809 Pro", "Running in the tray.",
+        splash.close()
+        win.tray.showMessage("SM809 Wired Studio", "Running in the tray.",
                              win.tray.MessageIcon.Information, 2000)
     else:
         win.show()
+        splash.finish(win)
     sys.exit(app.exec())
 
 

@@ -13,10 +13,10 @@ Signals:
   rules_changed(str, object)  -- (profile_id, [rules]) edited for a profile
 """
 
-from PySide6.QtCore import Signal, QTimer
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox, QComboBox,
-    QListWidget, QLineEdit, QPushButton,
+    QListWidget, QLineEdit, QPushButton, QScrollArea, QFrame,
 )
 
 from ..widgets.controls import Card
@@ -59,7 +59,6 @@ class AutoSwitchPanel(QWidget):
         hint.setProperty("cardHint", "true")
         hint.setWordWrap(True)
         enable_card.add(hint)
-        lay.addWidget(enable_card)
 
         # rules card
         rules_card = Card("Rules", "First matching profile in the list wins. "
@@ -72,16 +71,32 @@ class AutoSwitchPanel(QWidget):
         rules_card.add(sel_row)
 
         self.rules_list = QListWidget()
-        self.rules_list.setMinimumHeight(120)
+        self.rules_list.setMinimumHeight(110)
+        self.rules_list.setMaximumHeight(190)
         rules_card.add(self.rules_list)
+        self.rules_empty = QLabel(
+            "No rules for this profile yet. Add the target application's exe "
+            "name below (or use Detect app) and it will match whenever that "
+            "window is in front.")
+        self.rules_empty.setProperty("cardHint", "true")
+        self.rules_empty.setWordWrap(True)
+        rules_card.add(self.rules_empty)
+
+        fields_cap = QLabel("MATCH FIELDS — BLANK FIELDS ARE IGNORED")
+        fields_cap.setProperty("groupLabel", "true")
+        rules_card.add(fields_cap)
 
         in_row = QHBoxLayout()
         self.exe_edit = QLineEdit()
         self.exe_edit.setPlaceholderText("exe name, e.g. game.exe")
+        self.exe_edit.setToolTip("Executable name; matched case-insensitively")
         self.path_edit = QLineEdit()
         self.path_edit.setPlaceholderText("path contains (optional)")
+        self.path_edit.setToolTip(
+            "Part of the full path — use it to tell apart same-named exes")
         self.title_edit = QLineEdit()
         self.title_edit.setPlaceholderText("title contains (optional)")
+        self.title_edit.setToolTip("Part of the window title")
         in_row.addWidget(self.exe_edit, 2)
         in_row.addWidget(self.path_edit, 3)
         in_row.addWidget(self.title_edit, 2)
@@ -92,6 +107,8 @@ class AutoSwitchPanel(QWidget):
         add_btn.clicked.connect(self._add)
         detect_btn = QPushButton("Detect app (3s)…")
         detect_btn.clicked.connect(self._detect)
+        detect_btn.setToolTip(
+            "Switch to the game/app within 3 seconds; its details are filled in")
         rm_btn = QPushButton("Remove selected")
         rm_btn.clicked.connect(self._remove)
         btn_row.addWidget(add_btn)
@@ -102,9 +119,25 @@ class AutoSwitchPanel(QWidget):
 
         self.status = QLabel("")
         self.status.setProperty("cardHint", "true")
+        self.status.setWordWrap(True)
         rules_card.add(self.status)
-        lay.addWidget(rules_card)
-        lay.addStretch(1)
+
+        # The two cards need more height than the window's minimum, so the
+        # page scrolls instead of cutting the rule fields off.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        holder = QWidget()
+        col = QVBoxLayout(holder)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(14)
+        col.addWidget(enable_card)
+        col.addWidget(rules_card)
+        col.addStretch(1)
+        scroll.setWidget(holder)
+        lay.addWidget(scroll, 1)
+        self._load_rules()
 
     # -- external API ---------------------------------------------------------
     def set_profiles(self, profiles, select_id=None):
@@ -149,8 +182,13 @@ class AutoSwitchPanel(QWidget):
         if self._loading:
             return
         self.rules_list.clear()
-        for r in self._rules_by_pid.get(self.current_pid(), []):
+        rules = self._rules_by_pid.get(self.current_pid(), [])
+        for r in rules:
             self.rules_list.addItem(self._rule_label(r))
+        self.rules_empty.setVisible(not rules)
+        # An empty list is just a large blank box; hide it so the match
+        # fields and Add rule button stay in view until there is a rule.
+        self.rules_list.setVisible(bool(rules))
 
     def _emit_rules(self):
         pid = self.current_pid()
@@ -165,6 +203,8 @@ class AutoSwitchPanel(QWidget):
         path = self.path_edit.text().strip()
         title = self.title_edit.text().strip()
         if not (exe or path or title):
+            self.status.setText(
+                "Type an exe name, a path fragment or a window title first.")
             return
         self._rules_by_pid.setdefault(pid, []).append(
             {"exe": exe or None, "path": path or None, "title": title or None})

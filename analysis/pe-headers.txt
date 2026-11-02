@@ -1,0 +1,27 @@
+PE HEADERS (file-offset evidence)
+  DOS e_lfanew=0xf8; COFF machine=0x014c; sections=5; timestamp=0x67cc650e
+  Optional magic=0x010b; optional_size=0xe0; image_base=0x00400000; entry_rva=0x206bc; size_image=0xb7000
+  checksum=0x82c34; subsystem=2; dll_characteristics=0x8140
+  Sections (name, virtual address, virtual size, raw offset, raw size):
+    .text    VA=0x00001000 VS=0x00022e01 RAW=0x00000400 RS=0x00023000
+    .rdata   VA=0x00024000 VS=0x0000da8e RAW=0x00023400 RS=0x0000dc00
+    .data    VA=0x00032000 VS=0x0003cd50 RAW=0x00031000 RS=0x00000800
+    .rsrc    VA=0x0006f000 VS=0x0004322b RAW=0x00031800 RS=0x00043400
+    .reloc   VA=0x000b3000 VS=0x00003ddc RAW=0x00074c00 RS=0x00003e00
+  Data directories (index, RVA, size, file offset):
+    [00] rva=0x00000000 size=0x0 file_offset=-
+    [01] rva=0x0002d90c size=0x168 file_offset=0x2d90c
+    [02] rva=0x0006f000 size=0x4322b file_offset=0x6f000
+    [03] rva=0x00000000 size=0x0 file_offset=-
+    [04] rva=0x00078a00 size=0x21f0 file_offset=0x78a00
+    [05] rva=0x000b3000 size=0x3ddc file_offset=0xb3000
+    [06] rva=0x00029f6c size=0x70 file_offset=0x29f6c
+    [07] rva=0x00000000 size=0x0 file_offset=-
+    [08] rva=0x00000000 size=0x0 file_offset=-
+    [09] rva=0x00000000 size=0x0 file_offset=-
+    [10] rva=0x00029fe0 size=0x40 file_offset=0x29fe0
+    [11] rva=0x00000000 size=0x0 file_offset=-
+    [12] rva=0x00024000 size=0x618 file_offset=0x24000
+    [13] rva=0x00000000 size=0x0 file_offset=-
+    [14] rva=0x00000000 size=0x0 file_offset=-
+    [15] rva=0x00000000 size=0x0 file_offset=-

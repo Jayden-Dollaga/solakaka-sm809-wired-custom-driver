@@ -1,0 +1,104 @@
+PE HEADERS (file-offset evidence)
+  DOS e_lfanew=0xf8; COFF machine=0x014c; sections=5; timestamp=0x67cc650e
+  Optional magic=0x010b; optional_size=0xe0; image_base=0x00400000; entry_rva=0x206bc; size_image=0xb7000
+  checksum=0x82c34; subsystem=2; dll_characteristics=0x8140
+  Sections (name, virtual address, virtual size, raw offset, raw size):
+    .text    VA=0x00001000 VS=0x00022e01 RAW=0x00000400 RS=0x00023000
+    .rdata   VA=0x00024000 VS=0x0000da8e RAW=0x00023400 RS=0x0000dc00
+    .data    VA=0x00032000 VS=0x0003cd50 RAW=0x00031000 RS=0x00000800
+    .rsrc    VA=0x0006f000 VS=0x0004322b RAW=0x00031800 RS=0x00043400
+    .reloc   VA=0x000b3000 VS=0x00003ddc RAW=0x00074c00 RS=0x00003e00
+
+DATA.BIN
+  size=8; little-endian dwords=[13, 0]
+
+PROFILE.BIN
+  size=1649760; record_size=0x1cc50; count=14
+  [00] name="Delta Force" profile_index=0x1 speed=6 scroll=3 dbl=5 accel=0 hscroll=0
+       report_idx=2 active_stage=0 stage_count=1 dpi=[16, 16, 24, 32, 48, 64, 120, 228] enable=[1, 1, 1, 1, 1, 1, 1, 1]
+       light_mode=3 brightness=255 speed=3 period=0 dir=2 rgb=ff0000 lift=16 lift_en=0 key_resp=4
+       buttons[0..63]=01,02,03,07,08,2c,15,15,04,15,15,05,15,15,0a,51,00,00,00,00,00,00,ff,00,00,00,00,00,00,00,0b,0c,01,02,03,07,08,15,15,15,15,15,00,15,00,00,15,04,41,5f,00,00,00,36,5f,00,00,00,40,5c,00,00,0b,0c
+       flags=[1, 1, 1, 1, 1, 1, 1, 0]
+  [01] name="Valorant" profile_index=0x0 speed=6 scroll=3 dbl=5 accel=0 hscroll=0
+       report_idx=3 active_stage=0 stage_count=1 dpi=[16, 16, 24, 32, 48, 64, 120, 228] enable=[1, 1, 1, 1, 1, 1, 1, 1]
+       light_mode=4 brightness=255 speed=3 period=0 dir=2 rgb=00ffff lift=16 lift_en=0 key_resp=4
+       buttons[0..63]=01,02,03,00,00,15,15,15,04,00,00,05,00,00,0a,15,00,00,00,00,00,00,ff,00,00,00,00,00,00,00,0b,0c,01,02,03,07,08,2c,15,15,04,15,15,05,15,15,0a,51,41,5f,00,00,00,36,5f,00,00,00,40,5c,00,00,0b,0c
+       flags=[1, 1, 1, 1, 1, 1, 1, 0]
+  [02] name="NIkke" profile_index=0x0 speed=6 scroll=3 dbl=5 accel=0 hscroll=0
+       report_idx=3 active_stage=0 stage_count=1 dpi=[16, 16, 24, 32, 48, 64, 120, 228] enable=[1, 1, 1, 1, 1, 1, 1, 1]
+       light_mode=4 brightness=255 speed=3 period=1 dir=2 rgb=ff0000 lift=16 lift_en=0 key_resp=4
+       buttons[0..63]=01,02,03,15,15,15,00,00,0a,00,00,15,00,00,15,15,00,00,00,00,00,00,ff,00,00,00,00,00,00,00,0b,0c,01,02,03,07,08,2c,15,15,04,15,15,05,15,15,0a,51,41,5f,00,00,00,36,5f,00,00,00,40,5c,00,00,0b,0c
+       flags=[1, 1, 1, 1, 1, 1, 1, 0]
+  [03] name="ubg\roket" profile_index=0x0 speed=6 scroll=3 dbl=5 accel=0 hscroll=0
+       report_idx=3 active_stage=0 stage_count=8 dpi=[10, 16, 24, 32, 48, 64, 120, 228] enable=[1, 1, 1, 1, 1, 1, 1, 1]
+       light_mode=4 brightness=255 speed=3 period=1 dir=2 rgb=ff0000 lift=16 lift_en=0 key_resp=4
+       buttons[0..63]=01,02,03,07,08,15,00,15,04,15,15,05,15,15,0a,51,00,00,00,00,00,00,ff,00,00,00,00,00,00,00,0b,0c,01,15,03,07,08,15,00,15,15,00,00,05,00,00,0a,51,41,5f,00,00,00,36,5f,00,00,00,40,5c,00,00,0b,0c
+       flags=[1, 1, 1, 1, 1, 1, 1, 0]
+  [04] name="Roket League" profile_index=0x1 speed=6 scroll=3 dbl=5 accel=0 hscroll=0
+       report_idx=3 active_stage=0 stage_count=1 dpi=[16, 16, 24, 32, 48, 64, 120, 228] enable=[1, 1, 1, 1, 1, 1, 1, 1]
+       light_mode=1 brightness=255 speed=3 period=0 dir=2 rgb=05fffa lift=16 lift_en=0 key_resp=4
+       buttons[0..63]=01,02,03,07,08,2c,15,15,04,15,15,05,15,15,0a,51,00,00,00,00,00,00,ff,00,00,00,00,00,00,00,0b,0c,01,15,03,07,08,15,15,15,15,15,15,05,15,15,0a,51,41,5f,00,00,00,36,5f,00,00,00,40,5c,00,00,0b,0c
+       flags=[1, 1, 1, 1, 1, 1, 1, 0]
+  [05] name="Project Apex" profile_index=0x0 speed=6 scroll=3 dbl=5 accel=0 hscroll=0
+       report_idx=0 active_stage=0 stage_count=1 dpi=[16, 16, 24, 32, 48, 64, 120, 228] enable=[1, 1, 1, 1, 1, 1, 1, 1]
+       light_mode=4 brightness=255 speed=3 period=1 dir=2 rgb=ff0000 lift=16 lift_en=0 key_resp=4
+       buttons[0..63]=01,02,03,07,08,15,15,15,15,15,15,05,15,15,0a,51,00,00,00,00,00,00,ff,00,00,00,00,00,00,00,0b,0c,01,02,03,07,08,15,15,15,15,15,15,15,15,15,0a,51,41,5f,00,00,00,36,5f,00,00,00,40,5c,00,00,0b,0c
+       flags=[1, 1, 1, 1, 1, 1, 1, 0]
+  [06] name="TTK" profile_index=0x0 speed=6 scroll=3 dbl=5 accel=0 hscroll=0
+       report_idx=3 active_stage=0 stage_count=1 dpi=[10, 16, 24, 32, 48, 64, 120, 228] enable=[1, 1, 1, 1, 1, 1, 1, 1]
+       light_mode=4 brightness=255 speed=3 period=1 dir=2 rgb=ff0000 lift=16 lift_en=0 key_resp=4
+       buttons[0..63]=01,02,03,07,08,07,15,15,04,15,15,05,15,15,0a,51,00,00,00,00,00,00,ff,00,00,00,00,00,00,00,0b,0c,01,02,03,07,08,2c,15,15,04,15,15,05,15,15,0a,51,41,5f,00,00,00,36,5f,00,00,00,40,5c,00,00,0b,0c
+       flags=[1, 1, 1, 1, 1, 1, 1, 0]
+  [07] name="TSB/Rival" profile_index=0x0 speed=6 scroll=3 dbl=5 accel=0 hscroll=0
+       report_idx=3 active_stage=1 stage_count=8 dpi=[10, 16, 24, 32, 48, 64, 120, 228] enable=[1, 1, 1, 1, 1, 1, 1, 1]
+       light_mode=4 brightness=255 speed=3 period=1 dir=2 rgb=ff0000 lift=16 lift_en=0 key_resp=4
+       buttons[0..63]=01,02,03,07,08,15,15,15,15,00,00,05,00,00,0a,51,00,00,00,00,00,00,ff,00,00,00,00,00,00,00,0b,0c,01,02,03,07,08,15,15,15,15,15,15,15,15,15,0a,51,41,5f,00,00,00,36,5f,00,00,00,40,5c,00,00,0b,0c
+       flags=[1, 1, 1, 1, 1, 1, 1, 0]
+  [08] name="osu" profile_index=0x0 speed=6 scroll=2 dbl=5 accel=0 hscroll=0
+       report_idx=3 active_stage=1 stage_count=8 dpi=[10, 16, 24, 32, 48, 64, 120, 228] enable=[1, 1, 1, 1, 1, 1, 1, 1]
+       light_mode=4 brightness=255 speed=3 period=1 dir=2 rgb=ff0000 lift=16 lift_en=0 key_resp=1
+       buttons[0..63]=01,02,03,07,08,2c,15,15,04,15,15,05,15,15,0a,51,00,00,00,00,00,00,ff,00,00,00,00,00,00,00,0b,0c,01,02,03,07,08,2c,15,15,04,15,15,05,15,15,0a,51,41,5f,00,00,00,36,5f,00,00,00,40,5c,00,00,0b,0c
+       flags=[1, 1, 1, 1, 1, 1, 1, 0]
+  [09] name="duck works" profile_index=0x0 speed=6 scroll=3 dbl=5 accel=0 hscroll=0
+       report_idx=3 active_stage=0 stage_count=8 dpi=[10, 16, 24, 32, 48, 64, 120, 228] enable=[1, 1, 1, 1, 1, 1, 1, 1]
+       light_mode=4 brightness=255 speed=3 period=1 dir=2 rgb=ff0000 lift=16 lift_en=0 key_resp=4
+       buttons[0..63]=01,02,03,07,08,15,15,15,15,15,15,05,15,15,0a,51,00,00,00,00,00,00,ff,00,00,00,00,00,00,00,0b,0c,01,02,03,07,08,2c,15,15,04,15,15,05,15,15,0a,51,41,5f,00,00,00,36,5f,00,00,00,40,5c,00,00,0b,0c
+       flags=[1, 1, 1, 1, 1, 1, 1, 0]
+  [10] name="BloodStike" profile_index=0x0 speed=6 scroll=3 dbl=5 accel=0 hscroll=0
+       report_idx=3 active_stage=0 stage_count=8 dpi=[10, 16, 24, 32, 48, 64, 120, 228] enable=[1, 1, 1, 1, 1, 1, 1, 1]
+       light_mode=4 brightness=255 speed=3 period=1 dir=2 rgb=ff0000 lift=16 lift_en=0 key_resp=4
+       buttons[0..63]=01,02,03,07,08,15,00,15,15,00,00,05,00,00,15,15,00,00,00,00,00,00,ff,00,00,00,00,00,00,00,0b,0c,01,02,03,07,08,2c,15,15,04,15,15,05,15,15,0a,51,41,5f,00,00,00,36,5f,00,00,00,40,5c,00,00,0b,0c
+       flags=[1, 1, 1, 1, 1, 1, 1, 0]
+  [11] name="Farlight" profile_index=0x0 speed=6 scroll=3 dbl=5 accel=0 hscroll=0
+       report_idx=3 active_stage=1 stage_count=8 dpi=[10, 16, 24, 32, 48, 64, 120, 228] enable=[1, 1, 1, 1, 1, 1, 1, 1]
+       light_mode=4 brightness=255 speed=3 period=1 dir=2 rgb=ff0000 lift=16 lift_en=0 key_resp=4
+       buttons[0..63]=01,02,03,07,08,15,15,15,04,00,15,05,00,00,0a,00,00,00,00,00,00,00,ff,00,00,00,00,00,00,00,0b,0c,01,02,03,07,08,2c,15,15,04,15,15,05,15,15,0a,51,41,5f,00,00,00,36,5f,00,00,00,40,5c,00,00,0b,0c
+       flags=[1, 1, 1, 1, 1, 1, 1, 0]
+  [12] name="Profile13" profile_index=0x0 speed=6 scroll=3 dbl=5 accel=0 hscroll=0
+       report_idx=3 active_stage=1 stage_count=8 dpi=[10, 16, 24, 32, 48, 64, 120, 228] enable=[1, 1, 1, 1, 1, 1, 1, 1]
+       light_mode=4 brightness=255 speed=3 period=1 dir=2 rgb=ff0000 lift=16 lift_en=0 key_resp=4
+       buttons[0..63]=01,02,03,07,08,2c,15,15,04,15,15,05,15,15,0a,51,00,00,00,00,00,00,ff,00,00,00,00,00,00,00,0b,0c,01,02,03,07,08,2c,15,15,04,15,15,05,15,15,0a,51,41,5f,00,00,00,36,5f,00,00,00,40,5c,00,00,0b,0c
+       flags=[1, 1, 1, 1, 1, 1, 1, 0]
+  [13] name="Profile14" profile_index=0x0 speed=6 scroll=3 dbl=5 accel=0 hscroll=0
+       report_idx=3 active_stage=1 stage_count=8 dpi=[10, 16, 24, 32, 48, 64, 120, 228] enable=[1, 1, 1, 1, 1, 1, 1, 1]
+       light_mode=4 brightness=255 speed=3 period=1 dir=2 rgb=ff0000 lift=16 lift_en=0 key_resp=4
+       buttons[0..63]=01,02,03,07,08,2c,15,15,04,15,15,05,15,15,0a,51,00,00,00,00,00,00,ff,00,00,00,00,00,00,00,0b,0c,01,02,03,07,08,2c,15,15,04,15,15,05,15,15,0a,51,41,5f,00,00,00,36,5f,00,00,00,40,5c,00,00,0b,0c
+       flags=[1, 1, 1, 1, 1, 1, 1, 0]
+
+MACRO.BIN
+  size=1712; record_size=0x358; count=2
+  [00] folder="Minecraft" name="" repeat=0 event_count=0 lock=0 folder_flag=1
+  [01] folder="Minecraft" name="Spear Lunge" repeat=1 event_count=6 lock=0 folder_flag=0
+       ev00 flags=00 key=1e type=1 delay=10 aux=0x0000 x=726 y=379
+       ev01 flags=00 key=f0 type=1 delay=20 aux=0x0000 x=0 y=0
+       ev02 flags=00 key=f0 type=2 delay=10 aux=0x0000 x=0 y=0
+       ev03 flags=00 key=1e type=2 delay=20 aux=0x0000 x=0 y=0
+       ev04 flags=b0 key=1f type=1 delay=20 aux=0x005c x=695 y=479
+       ev05 flags=b0 key=1f type=2 delay=20 aux=0x005c x=695 y=479
+
+GUN.BIN
+  size=0; record_size=0x240; count=0
+
+DEFAULT.PBIN
+  size=117840; expected=0x1cc50; name="Profile 1"; action_bytes[0..63]=01,02,03,07,08,2c,15,15,04,15,15,05,15,15,0a,51,00,00,00,00,00,00,ff,00,00,00,00,00,00,00,0b,0c,01,02,03,07,08,2c,15,15,04,15,15,05,15,15,0a,51,41,5f,00,00,00,36,5f,00,00,00,40,5c,00,00,0b,0c
+
