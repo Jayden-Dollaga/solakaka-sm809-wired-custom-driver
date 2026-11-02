@@ -94,7 +94,6 @@ journal.txt
 # never shipped (the installer/EXE must not contain a developer's profiles,
 # macro library or settings backups).
 data/
-config/
 backups/
 
 .venv
