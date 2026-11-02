@@ -86,10 +86,16 @@ $RECYCLE.BIN/
 *.bak
 *.tmp
 *.log
-
 logs/
 CLAUDE.md
 journal.txt
+
+# Portable runtime state: created from the clean seed on first launch and
+# never shipped (the installer/EXE must not contain a developer's profiles,
+# macro library or settings backups).
+data/
+config/
+backups/
 
 .venv
 .pytest_cache

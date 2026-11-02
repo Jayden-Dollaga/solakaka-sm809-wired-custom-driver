@@ -69,13 +69,41 @@ auto-apply.
 with Windows** registers.
 
 On first launch the studio creates `data/` and copies the initial device data
-from `seed/`. Delete `data/` to start again from the seed; `config/` holds your
-profile, macro and gun libraries and is not recreated.
+from `seed/`. The seed contains exactly one factory-default profile named
+**Profile** (built from `Default.pbin`); the vendor installer's sample profile
+library is never shipped. Delete `data/` to start again from the seed; `config/`
+holds your profile, macro and gun libraries and is not recreated.
 
 Set `SM809_DATA_DIR` to use a different data folder. The host-side
 `config/profiles.json`, `config/macros.json` and `config/guns.json` are created
 inside that folder too, so a scratch or second portable copy never writes into
 the main one.
+
+### Building a portable EXE
+
+`SM809WiredStudio.spec` builds a single-file, windowed executable with
+PyInstaller:
+
+```bat
+.venv\Scripts\python -m pip install pyinstaller
+.venv\Scripts\python -m PyInstaller --noconfirm SM809WiredStudio.spec
+```
+
+The result is `dist\SM809WiredStudio.exe` (about 52 MB). `build_exe.bat`
+automates this and starts from a clean slate every run: it refuses to run while
+the studio is open, then deletes `build\SM809WiredStudio`, `dist\` and the
+working `data\` folder before rebuilding. `data\` is recreated from seed at the
+next launch, so the exe starts with the single factory **Profile**. Your source
+`config\` libraries are never deleted.
+
+It is self-contained: only `images/` plus the clean seed (`seed/Data` and
+`seed/Data.ini`) are bundled. Your working `data/`, `config/` and `backups/`
+folders are never packed, so a freshly built exe always starts with the single
+factory **Profile** — no developer profiles, macros or settings travel with it.
+The writable `data/`, `config/` and `logs/` folders are created beside the exe
+on first launch, so profiles survive moving or restarting it. The first start
+takes a few seconds while the bundle unpacks. The command-line flags work the
+same as from source. Close any running copy before overwriting the exe.
 
 ---
 
@@ -302,7 +330,9 @@ the default window size.
   nearest step. The default stages are 1000, 1600, 2400, 3200, 4800, 6400,
   12000 and 22800 DPI.
 - **Enable checkbox:** uncheck a stage to skip it when cycling through DPI
-  stages. Disabled rows are dimmed.
+  stages. Disabled rows are dimmed. The mouse stores the stages as one
+  continuous list, so enabled rows keep their order but gaps are closed when
+  the profile is written (stage 2 stays selected even if stage 1 is disabled).
 - **Active stage:** click a stage's number badge to make it the live DPI. Only
   enabled stages can be activated.
 - **LED colour:** each stage has its own colour swatch, shown on the mouse when

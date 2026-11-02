@@ -987,9 +987,12 @@ class MainWindow(QMainWindow):
             self._schedule_profile_save()
 
     def _on_dpi_push(self, level):
+        # `level` is the device's stage number (index among enabled stages);
+        # the panel maps it to the right row.
         self.dpi_panel.set_active_stage(level)
-        if 0 <= level < len(self.dpi_panel.rows):
-            dpi = self.dpi_panel.rows[level].dpi()
+        row = self.dpi_panel.active_row()
+        if row is not None:
+            dpi = row.dpi()
             self.topbar.set_dpi_readout(f"{dpi}")
             self._cur_dpi = dpi
             # Flash a single "DPI" card on a real stage change (skip the first

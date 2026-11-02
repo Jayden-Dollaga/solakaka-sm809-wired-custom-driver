@@ -75,6 +75,10 @@ def seeded_store(tmp_path):
 
 
 def trim(store, keep=3):
+    # The shipped seed is a single default profile; top up when a test needs
+    # a populated library.
+    while len(store.all()) < keep:
+        store.add(f"Profile {len(store.all()) + 1}")
     while len(store.all()) > keep:
         store.delete(store.all()[-1]["id"])
 

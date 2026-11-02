@@ -138,13 +138,14 @@ def test_sanitize_lighting_repairs_and_reports():
 
 
 def test_import_pbin_sanitizes_led_bytes(tmp_path):
-    from wired.model import DataStore
+    from wired.model import PROFILE_COUNT, DataStore
     from wired.paths import SEED_DIR
 
     dest = tmp_path / "Data"
     shutil.copytree(SEED_DIR / "Data", dest)
     store = DataStore(dest)
-    store.delete_profile(-1)            # make room under the 14-profile limit
+    if len(store.profiles) >= PROFILE_COUNT:
+        store.delete_profile(-1)        # make room under the 14-profile limit
 
     bad = Profile()
     bad.name = "Legacy"

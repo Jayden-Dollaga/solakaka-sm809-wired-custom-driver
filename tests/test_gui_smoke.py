@@ -312,6 +312,31 @@ def test_window_mode_and_dpi_osd(qapp, tmp_path, monkeypatch):
         qapp.processEvents()
 
 
+def test_dpi_push_reads_the_enabled_row(qapp, tmp_path, monkeypatch):
+    """A status push with a disabled stage above it must show the DPI of the
+    row that is actually highlighted."""
+    win = _make_window(qapp, tmp_path, monkeypatch)
+    try:
+        panel = win.dpi_panel
+        # the bundled seed profile has a single stage; give the panel a prefix
+        from sm809pro import defaults as D
+        panel.set_values(list(D.DPI_VALUES[:4]), list(D.DPI_COLORS[:4]),
+                         enabled_count=4)
+        panel.rows[0].toggle.setChecked(False)      # disable stage 1
+        panel._apply_timer.stop()                   # isolate the push under test
+        win._prev_dpi_level = None
+
+        win._on_dpi_push(0)                          # first enabled stage
+
+        assert panel.rows[1]._active
+        assert not panel.rows[0]._active
+        assert win.topbar.dpi_readout.text() == str(panel.rows[1].dpi())
+    finally:
+        win._force_quit = True
+        win.close()
+        qapp.processEvents()
+
+
 def test_controller_mode_event_reports_the_same_layer(
         qapp, tmp_path, monkeypatch):
     """A physical mode-button event must not come back inverted.

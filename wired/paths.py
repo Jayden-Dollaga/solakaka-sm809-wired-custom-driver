@@ -15,9 +15,20 @@ import sys
 from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parent.parent
+
+if getattr(sys, "frozen", False):
+    # A PyInstaller bundle imports this module from its temporary extraction
+    # folder, so ``Path(__file__)`` is not the user's folder.  Keep the
+    # writable data directory beside the .exe (it must survive restarts), and
+    # read the read-only seeds from the bundle instead.
+    APP_DIR = Path(sys.executable).resolve().parent
+    BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))
+else:
+    BUNDLE_DIR = APP_DIR
+
 DATA_DIR = Path(os.environ.get("SM809_DATA_DIR", APP_DIR / "data")).resolve()
 DEVICE_DATA_DIR = DATA_DIR / "Data"
-SEED_DIR = APP_DIR / "seed"
+SEED_DIR = BUNDLE_DIR / "seed"
 
 _DATA_FILES = ("Data.bin", "profile.bin", "Default.pbin", "macro.bin", "gun.bin")
 

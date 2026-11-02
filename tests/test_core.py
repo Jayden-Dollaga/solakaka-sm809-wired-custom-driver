@@ -47,7 +47,13 @@ def store(tmp_path):
 
 
 def trim(store, keep=3):
-    """Delete profiles until only `keep` remain (the wired floor is 1)."""
+    """Leave exactly `keep` profiles.
+
+    The shipped seed contains a single default profile, so top up first when a
+    test needs a populated library.
+    """
+    while len(store.all()) < keep:
+        store.add(f"Profile {len(store.all()) + 1}")
     while len(store.all()) > keep:
         store.delete(store.all()[-1]["id"])
     assert len(store.all()) == keep
@@ -60,6 +66,20 @@ def test_seed_is_copied_and_device_files_exist(seeded):
         assert (DEVICE_DATA_DIR / name).exists(), name
     # the seed stays intact as the pristine copy
     assert (SEED_DIR / "Data" / "Default.pbin").exists()
+
+
+def test_seed_ships_only_the_factory_default_profile():
+    """A new install starts with one default profile, never the vendor's
+    sample profile library."""
+    from wired.model import DataStore
+
+    store = DataStore(SEED_DIR / "Data")
+    assert len(store.profiles) == 1
+    assert store.profiles[0].name == "Profile"
+    # the profile must match the factory template the app resets to
+    default = (SEED_DIR / "Data" / "Default.pbin").read_bytes()[:PROFILE_SIZE]
+    seeded = store.profiles[0].raw
+    assert bytes(seeded[0x64:]) == default[0x64:]   # everything after the name
 
 
 def test_profile_store_reads_wired_profiles(store):
@@ -203,6 +223,8 @@ def test_export_import_pbin_matches_official_driver(store, tmp_path):
     assert name.encode("utf-16-le") in blob[:200]
 
     # make room, then import the exported record
+    if len(store.all()) < 2:
+        store.add("Import Target")
     victim = store.all()[-1]["id"]
     if victim == pid:
         victim = store.all()[0]["id"]

@@ -193,7 +193,10 @@ class DpiPanel(QWidget):
         dpi = dpi or DEFAULT_DPI
         colors = colors or DEFAULT_COLORS
         self._suspend_apply = False  # set while programmatically loading values
-        self._selected = _D.DPI_SELECTED  # absolute active-stage index (0-based)
+        # Absolute row index of the active stage.  The device's own stage number
+        # counts only *enabled* stages, so it is converted at the panel boundary
+        # (see set_active_stage / _active_relative).
+        self._selected = 0
 
         # debounce timer for auto-apply
         self._apply_timer = QTimer(self)
@@ -246,13 +249,16 @@ class DpiPanel(QWidget):
         scroll.setWidget(holder)
         root.addWidget(scroll, 1)
 
-        # reflect the initial active stage
-        self.set_active_stage(self._selected)
+        # reflect the initial active stage (factory default is a relative index)
+        self.set_active_stage(_D.DPI_SELECTED)
 
     def _on_any_edit(self):
         # auto-apply (debounced); ignore edits we triggered programmatically
         if self._suspend_apply:
             return
+        # If the active stage was just disabled, move the highlight right away.
+        # Waiting for the debounced apply left the outline on a disabled row.
+        self._ensure_active_enabled()
         self._apply_timer.start()
 
     def _on_activate_requested(self, abs_index):
@@ -266,11 +272,11 @@ class DpiPanel(QWidget):
         """
         if self._suspend_apply:
             return
-        if not self.rows[abs_index].is_enabled():
+        enabled = self._enabled_indices()
+        if abs_index not in enabled:
             return
         self._selected = abs_index
-        self.set_active_stage(abs_index)
-        enabled = self._enabled_indices()
+        self._refresh_active()
         dpis = [self.rows[i].dpi() for i in enabled]
         sel = enabled.index(abs_index)
         # any pending debounced full-config apply is redundant now; cancel it
@@ -280,31 +286,77 @@ class DpiPanel(QWidget):
     def _enabled_indices(self):
         return [i for i, r in enumerate(self.rows) if r.is_enabled()]
 
-    def _emit_apply(self):
+    def _active_relative(self):
+        """The active stage as the device numbers it (index among enabled
+        rows), or 0 when nothing is selected."""
         enabled = self._enabled_indices()
         if not enabled:
-            return
-        dpis = [self.rows[i].dpi() for i in enabled]
-        cols = [self.rows[i].rgb() for i in enabled]
-        # the device's `selected` is an index into the enabled list; clamp if the
-        # active stage was just disabled
-        if self._selected in enabled:
-            sel = enabled.index(self._selected)
-        else:
-            sel = 0
-            self._selected = enabled[0]
-            self.set_active_stage(self._selected)
-        self.apply_requested.emit(dpis, cols, sel)
+            return 0
+        if self._selected not in enabled:
+            return 0
+        return enabled.index(self._selected)
 
-    def set_active_stage(self, level: int):
-        """Highlight the stage at `level` (0-based absolute index among 8 rows)."""
-        self._selected = level
+    def _ensure_active_enabled(self):
+        """Keep the active stage inside the enabled prefix.
+
+        Checkboxes can leave gaps (row 0 off, rows 1..6 on), but the firmware
+        stores stages as a prefix.  Compaction is done on apply; here we only
+        guarantee the highlight never sits on a disabled row.
+        """
+        enabled = self._enabled_indices()
+        if not enabled:
+            # The mouse always has at least one DPI stage.  Refuse to leave the
+            # list empty: re-enable the row that just lost its checkbox.
+            row = self.rows[self._selected] if (
+                0 <= self._selected < len(self.rows)) else self.rows[0]
+            row.toggle.blockSignals(True)
+            row.toggle.setChecked(True)
+            row.toggle.blockSignals(False)
+            row._sync_enabled()
+            enabled = [row.index]
+        if self._selected not in enabled:
+            self._selected = enabled[0]
+            self._refresh_active()
+
+    def _refresh_active(self):
         for i, row in enumerate(self.rows):
-            want = (i == level)
+            want = (i == self._selected)
             # re-polish only rows whose state actually changed -- this runs on
             # every device status push, not just on a real stage switch
             if row._active != want:
                 row.set_active(want)
+
+    def _emit_apply(self):
+        enabled = self._enabled_indices()
+        if not enabled:
+            return
+        self._ensure_active_enabled()
+        dpis = [self.rows[i].dpi() for i in enabled]
+        cols = [self.rows[i].rgb() for i in enabled]
+        # the device's `selected` is an index into the enabled list
+        sel = enabled.index(self._selected)
+        self.apply_requested.emit(dpis, cols, sel)
+
+    def active_row(self):
+        """The row currently active on the device, or None."""
+        if self._selected in self._enabled_indices():
+            return self.rows[self._selected]
+        return None
+
+    def set_active_stage(self, level: int):
+        """Highlight the stage at `level`.
+
+        `level` is the device's stage number: an index into the *enabled*
+        stages, exactly as stored in the profile and reported by the status
+        push (0 = first enabled row).  Mapping it through the enabled list keeps
+        the highlight on the clicked row when disabled stages are above it.
+        """
+        enabled = self._enabled_indices()
+        if not enabled:
+            return
+        rel = max(0, min(int(level), len(enabled) - 1))
+        self._selected = enabled[rel]
+        self._refresh_active()
 
     def set_values(self, dpi, colors=None, enabled_count=None):
         """Set the stage DPI values (and optionally colors) from outside, e.g.
