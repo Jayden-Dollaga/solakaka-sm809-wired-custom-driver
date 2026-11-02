@@ -661,10 +661,9 @@ def test_autoswitch_hides_the_empty_rules_box(qapp):
         qapp.processEvents()
         assert panel.rules_list.isHidden()
         assert not panel.rules_empty.isHidden()
-        assert "No rules" in panel.rules_empty.text()
+        assert "No custom apps" in panel.rules_empty.text()
 
-        panel.exe_edit.setText("game.exe")
-        panel._add()
+        panel._add_rule("p1", {"exe": "game.exe"})
         qapp.processEvents()
         assert not panel.rules_list.isHidden()
         assert panel.rules_empty.isHidden()

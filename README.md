@@ -79,6 +79,33 @@ Set `SM809_DATA_DIR` to use a different data folder. The host-side
 inside that folder too, so a scratch or second portable copy never writes into
 the main one.
 
+### Administrator rights
+
+Like the official SM809 driver, the studio asks for administrator rights so it
+can read the foreground window of games that run elevated. Windows does not let
+a normal process inspect an elevated one, so without this the auto-switch
+watcher cannot see anti-cheat or other admin-only titles and those apps would
+never trigger a profile.
+
+- **Packaged exe:** `SM809WiredStudio.spec` embeds a `requireAdministrator`
+  manifest (`uac_admin=True`), so Windows shows the consent prompt every time
+  the exe starts.
+- **From source:** `run_app.py` checks `IsUserAnAdmin()` at startup and, when
+  needed, relaunches itself once through `ShellExecuteW("runas", ...)`. Accept
+  the UAC prompt to continue with full detection.
+- If you decline the prompt, the studio asks whether to continue without
+  administrator rights. Continuing works for most apps, but elevated games are
+  not detected; the Auto-Switch page shows an orange reminder in that state.
+- `--demo` never relaunches from source, and `--no-elevate` skips the relaunch on
+  purpose. (The packaged exe always elevates through its manifest, even in demo
+  mode.) A `SM809_ELEVATION_TRIED=1` environment sentinel prevents a relaunch
+  loop if UAC is dismissed.
+
+Note that **Start with Windows** writes a normal `HKCU\...\Run` entry. Because
+the exe requires administrator rights, Windows may show a UAC prompt at sign-in;
+if that is annoying, launch the studio manually or keep the auto-start task but
+expect the prompt.
+
 ### Building a portable EXE
 
 `SM809WiredStudio.spec` builds a single-file, windowed executable with
@@ -424,11 +451,24 @@ per device:
 
 The headline feature the official wired software does not have.
 
-- Each profile can hold one or more **match rules**: executable name, full path,
-  or part of the window title. Blank fields are ignored; matching is
-  case-insensitive.
-- **Detect app (3s)…** waits three seconds, then fills the fields from the
-  foreground window and flashes the result in the on-screen overlay.
+- Each profile can hold one or more **custom apps**: executable name, full
+  path, or part of the window title. Blank fields are ignored; every filled
+  field must match, case-insensitively.
+- **Custom apps** page: click a profile on the left to see the apps assigned to
+  it on the right. The same list is reachable from **Profiles → Manage apps…**.
+- **Add app…** opens a searchable list of every running window, with icons and
+  exe names (like the NVIDIA Control Panel program list), and assigns the
+  chosen app immediately. The rule uses the exe name alone when it is unique,
+  adds the full path only when another running app shares the exe (e.g. UE's
+  `Client-Win64-Shipping.exe`), and adds the window title for UWP apps that all
+  run inside `ApplicationFrameHost.exe`.
+- **Detect app (3s)…** does the same for the foreground window without using
+  the list — useful for a fullscreen game. A second capture of the same app is
+  not duplicated. The overlay confirms what was captured.
+- **Browse…** in the Add app dialog chooses an application's `.exe` from disk,
+  so games and launchers that are not currently running can be added too.
+- **Live readout:** while the page is open it shows the current foreground exe
+  and whether it matches a profile.
 - **Priority:** first match in profile-list order wins. Drag profiles to
   reorder or sort the list.
 - **Base profile:** the profile you selected manually is sticky. When a focused
@@ -438,6 +478,9 @@ The headline feature the official wired software does not have.
   from the one already applied, so a steady foreground never re-pushes config.
 - **Debounce:** the foreground window is polled every 200 ms and must remain
   stable for 200 ms, so fast Alt-Tab passes do not rewrite the mouse.
+- **Elevated games:** if Windows denies process-query access (some launchers or
+  anti-cheat titles), the watcher falls back to a process snapshot, so exe-name
+  and title rules still match.
 - Auto-switch can be enabled on its page or from the tray menu, and the setting
   persists. Switching is announced by a tray notification and, if enabled, the
   overlay.
@@ -591,6 +634,14 @@ Useful troubleshooting:
   apply log; a table beyond index 11 is left unpointed.
 - **Lighting looks wrong:** inspect the encoded `0D`/`10` frames at DEBUG; the
   studio always writes the complete LED group.
+- **Auto-switch does not fire:** make sure the app appears in the selected
+  profile's **Custom apps** list (start it first, then use **Add app…**, or
+  **Detect app (3s)** while it is in front), auto-switch is enabled, and the
+  studio is still running in the tray. If the game runs as administrator,
+  restart the studio elevated too; an elevated window is invisible to a normal
+  process. The live **Foreground** line shows what Windows reports; run with
+  `--verbose` and look for DEBUG `sm809.autoswitch` foreground lines if
+  matching still fails.
 
 ---
 
@@ -600,8 +651,10 @@ Useful troubleshooting:
   Windows" are Windows implementations.
 - **Wired SM809 only.** It targets VID `0x04D9` / PID `0xA09F`. It does not
   support the wireless SM809 Pro; `--demo` is the only mode without the mouse.
-- **Source distribution.** There is no packaged installer or prebuilt `.exe`
-  in this repository; run it with Python or build your own bundle.
+- **Packaging.** There is no installer: the portable single-file
+  `SM809WiredStudio.exe` (built with `build_exe.bat`, attached to the GitHub
+  release) is the supported way to run it without Python. A source checkout
+  needs Python and the dependencies in `requirements.txt`.
 - **No LOD, battery, wireless status, power management or sensor flags.** Those
   controls belong to the wireless hardware and are intentionally absent.
 - **Firmware table budget.** Ten macro buttons and three gun buttons share

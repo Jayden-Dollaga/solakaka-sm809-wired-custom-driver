@@ -386,6 +386,7 @@ class MainWindow(QMainWindow):
         self.profiles_panel.delete_requested.connect(self._profile_delete)
         self.profiles_panel.import_requested.connect(self._profile_import)
         self.profiles_panel.export_requested.connect(self._profile_export_pbin)
+        self.profiles_panel.manage_apps_requested.connect(self._on_manage_apps)
 
         # debounce a device re-sync when a bound macro's body is edited
         self._macro_resync = QTimer(self)
@@ -516,6 +517,8 @@ class MainWindow(QMainWindow):
 
     def _on_rules_changed(self, pid, rules):
         self.profiles.set_match_rules(pid, rules)
+        if hasattr(self, "profiles_panel"):
+            self.profiles_panel.set_match_rules(pid, rules)
         if getattr(self, "_auto", None) is not None and self._auto.is_enabled():
             self._auto.poll()   # let a just-added rule take effect immediately
 
@@ -527,6 +530,13 @@ class MainWindow(QMainWindow):
         if title:
             lines.append(("Window", title if len(title) <= 28 else title[:27] + "…"))
         self.overlay.flash_lines(lines)
+
+    def _on_manage_apps(self, pid):
+        """Open Auto-Switch with this profile selected in its app list."""
+        if not pid:
+            return
+        self.autoswitch_panel.select_profile(pid)
+        self.nav.setCurrentRow(NAV_ITEMS.index("Auto-Switch"))
 
     def _on_profile_selected(self, idx):
         # a MANUAL selection from the combo -> this becomes the sticky base
@@ -548,6 +558,10 @@ class MainWindow(QMainWindow):
         self._schedule_profile_save()      # batched sidecar write
         if getattr(self, "_auto", None) is not None:
             self._auto.set_base(pid)
+        # Keep the Auto-Switch tab on the profile the user just picked, so its
+        # custom-app list is the one they expect to see.
+        if hasattr(self, "autoswitch_panel"):
+            self.autoswitch_panel.select_profile(pid)
         self._apply_by_id(pid)
 
     def _apply_by_id(self, pid):

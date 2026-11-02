@@ -2,8 +2,9 @@
 """
 run_app.py -- launch the SM809 Wired Studio desktop app.
 
-    python run_app.py            # normal launch (wired SM809)
-    python run_app.py --demo     # offline demo: no USB I/O is performed
+    python run_app.py            # normal launch (wired SM809), elevated like the driver
+    python run_app.py --demo     # offline demo: no USB I/O, no elevation
+    python run_app.py --no-elevate  # run this process without asking for admin
 
 Single-instance: the app lives in the tray, so launching it again does NOT start
 a second copy -- it signals the running instance to show its window and exits.
@@ -62,6 +63,13 @@ def _listen_for_relaunch(win) -> QLocalServer:
 
 
 def main():
+    # Same privilege level as the official driver: a source run relaunches
+    # itself elevated (the packaged exe asks through its manifest). --demo and
+    # --no-elevate skip this; declining UAC keeps going with a warning.
+    from app.elevation import prepare_startup
+    if not prepare_startup(sys.argv[1:]):
+        return
+
     # Diagnostics first: Qt's own warnings (and anything that fails during
     # startup) should land in logs/studio.log, not a bare stderr line.
     verbose = ("--verbose" in sys.argv or "-v" in sys.argv)

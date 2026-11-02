@@ -63,4 +63,9 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=str(project_root / "images" / "icon.ico"),
+    # Same privilege level as the official driver: Windows asks for
+    # administrator rights before the studio starts, so auto-switch can see
+    # games that run elevated (some anti-cheat titles) and HID configuration
+    # is never blocked by the game's security layer.
+    uac_admin=True,
 )

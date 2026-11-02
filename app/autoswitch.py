@@ -21,10 +21,13 @@ testable headless and the OS-specific part can be swapped per platform (Windows
 implemented; macOS/Linux land in the M3 step 6 port).
 """
 
+import logging
 import os
 import time
 
 from PySide6.QtCore import QObject, QTimer, Signal
+
+_log = logging.getLogger("sm809.autoswitch")
 
 
 # --- foreground-window detection --------------------------------------------
@@ -48,30 +51,67 @@ def _null_foreground():
     return (None, None, None)
 
 
-def _win_foreground():
+def _process_exe_name(kernel32, ctypes, wintypes, pid):
+    """Toolhelp fallback: exe name for `pid` without opening the process.
+
+    OpenProcess can be denied for a game running elevated (or behind an
+    anti-cheat), which used to leave exe/path empty and made every rule fail.
+    A process snapshot only needs the exe name, which Windows exposes anyway.
+    """
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_void_p),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    TH32CS_SNAPPROCESS = 0x00000002
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.Process32FirstW.argtypes = [wintypes.HANDLE,
+                                         ctypes.POINTER(PROCESSENTRY32W)]
+    kernel32.Process32NextW.argtypes = [wintypes.HANDLE,
+                                        ctypes.POINTER(PROCESSENTRY32W)]
+    snap = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    invalid = ctypes.c_void_p(-1).value
+    if not snap or snap == invalid:
+        return None
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+        if not kernel32.Process32FirstW(snap, ctypes.byref(entry)):
+            return None
+        while True:
+            if entry.th32ProcessID == pid:
+                name = (entry.szExeFile or "").strip().lower()
+                return name or None
+            if not kernel32.Process32NextW(snap, ctypes.byref(entry)):
+                return None
+    finally:
+        kernel32.CloseHandle(snap)
+
+
+def _pid_app(pid):
+    """(exe_basename_lower, full_path) for a process, or (None, None).
+
+    OpenProcess may be denied for an elevated game or anti-cheat title, so the
+    Toolhelp snapshot is used as a fallback: the list picker and matching still
+    get the exe name even when the full path is unavailable.
+    """
     import ctypes
     from ctypes import wintypes
 
-    user32 = ctypes.windll.user32
     kernel32 = ctypes.windll.kernel32
-
-    hwnd = user32.GetForegroundWindow()
-    if not hwnd:
-        return (None, None, None)
-
-    # window title
-    user32.GetWindowTextLengthW.restype = ctypes.c_int
-    length = user32.GetWindowTextLengthW(hwnd)
-    buf = ctypes.create_unicode_buffer(length + 1)
-    user32.GetWindowTextW(hwnd, buf, length + 1)
-    title = buf.value or ""
-
-    # owning process id -> exe name
-    pid = wintypes.DWORD()
-    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-    full_path = None
     PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+    full_path = None
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if handle:
         try:
             kernel32.QueryFullProcessImageNameW.argtypes = [
@@ -85,7 +125,143 @@ def _win_foreground():
         finally:
             kernel32.CloseHandle(handle)
     exe = os.path.basename(full_path).lower() if full_path else None
+    if not exe:
+        exe = _process_exe_name(kernel32, ctypes, wintypes, pid)
+    return (exe, full_path)
+
+
+def _win_foreground():
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return (None, None, None)
+
+    # window title
+    user32.GetWindowTextLengthW.restype = ctypes.c_int
+    length = user32.GetWindowTextLengthW(hwnd)
+    buf = ctypes.create_unicode_buffer(length + 1)
+    user32.GetWindowTextW(hwnd, buf, length + 1)
+    title = buf.value or ""
+
+    # owning process id -> exe name / full path
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    exe, full_path = _pid_app(pid.value)
     return (exe, title, full_path)
+
+
+# --- running-app list for the picker ----------------------------------------
+# Windows UWP apps all run inside ApplicationFrameHost.exe, so the exe alone
+# cannot tell Calculator from Photos; those entries also match on the title.
+UWP_HOST_EXES = {"applicationframehost.exe"}
+
+
+def list_running_apps():
+    """Visible top-level windows as ``{title, exe, path}`` dicts, sorted by
+    title. Used by the "Add app" picker; empty on non-Windows platforms or if
+    the enumeration fails (the picker then says so instead of crashing)."""
+    if os.name != "nt":
+        return []
+    try:
+        return _win_list_apps()
+    except Exception:
+        _log.debug("running-app enumeration failed", exc_info=True)
+        return []
+
+
+def rule_for_app(apps, app):
+    """The narrowest rule that still targets `app` from the running-app list.
+
+    - exe name unique in the list -> match the exe only, so moving or updating
+      the app (for example a versioned game folder) does not break the rule;
+    - several running apps share the exe -> also match the full path;
+    - UWP host windows -> also match the window title.
+    """
+    exe = (app.get("exe") or "").strip().lower()
+    path = (app.get("path") or "").strip()
+    title = (app.get("title") or "").strip()
+    rule = {"exe": exe or None, "path": None, "title": None}
+    if not exe:
+        return rule
+    if exe in UWP_HOST_EXES:
+        rule["path"] = path or None
+        rule["title"] = title.lower() or None
+        return rule
+    same = [a for a in apps
+            if (a.get("exe") or "").strip().lower() == exe]
+    if len(same) > 1:
+        rule["path"] = path or None
+    return rule
+
+
+def _win_list_apps():
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    user32.GetWindowTextLengthW.restype = ctypes.c_int
+
+    GWL_EXSTYLE = -20
+    WS_EX_TOOLWINDOW = 0x00000080
+    get_long = getattr(user32, "GetWindowLongPtrW", None)
+    if get_long is not None:
+        get_long.restype = ctypes.c_longlong
+    else:
+        get_long = user32.GetWindowLongW
+        get_long.restype = ctypes.c_long
+    get_long.argtypes = [wintypes.HWND, ctypes.c_int]
+
+    # shell surfaces and IME helpers show up as invisible system windows
+    skip_titles = {"program manager", "default ime", "msctfime ui",
+                   "windows input experience", "microsoft text input application"}
+
+    apps = {}
+    seen_pids = {}
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def _visit(hwnd, _lparam):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length <= 0:
+            return True
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buf, length + 1)
+        title = (buf.value or "").strip()
+        if not title or title.lower() in skip_titles:
+            return True
+        if get_long(hwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW:
+            return True
+
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value in seen_pids:
+            exe, path = seen_pids[pid.value]
+        else:
+            exe, path = _pid_app(pid.value)
+            seen_pids[pid.value] = (exe, path)
+        if not exe:
+            return True
+        path_lower = (path or "").lower()
+        if exe in UWP_HOST_EXES:
+            key = (exe, path_lower, title.lower())
+        else:
+            # one picker row per program: Chrome or VS Code windows collapse
+            key = (exe, path_lower)
+        if key not in apps:
+            apps[key] = {"title": title, "exe": exe, "path": path}
+        return True
+
+    user32.EnumWindows.argtypes = [type(_visit), wintypes.LPARAM]
+    user32.EnumWindows(_visit, 0)
+    return sorted(apps.values(), key=lambda a: a["title"].lower())
+
+
+
 
 
 # --- rule matching (pure) ----------------------------------------------------
@@ -140,6 +316,7 @@ class AutoSwitcher(QObject):
         self._watcher = watcher or ForegroundWatcher()
         self._base_id = None
         self._enabled = False
+        self._last_fg = None          # (exe, path) for change-only debug logging
         # debounce: apply only after the target stays put for this long, so fast
         # alt-tabbing through apps doesn't flood the (stateful) device with a full
         # profile-apply per transient window. 0 = switch immediately.
@@ -177,6 +354,10 @@ class AutoSwitcher(QObject):
         if not self._enabled:
             return
         exe, title, path = self._watcher.current()
+        if (exe, path) != self._last_fg:
+            self._last_fg = (exe, path)
+            _log.debug("foreground: %s | %s", exe or "(unknown)",
+                       path or "(no path)")
         # Only id + rules are needed for matching. A ProfileStore exposes
         # ``match_targets`` so the 200 ms poll does not rebuild every profile's
         # full button/DPI/lighting config; simpler stores still work via all().
@@ -203,5 +384,6 @@ class AutoSwitcher(QObject):
             self._switch(target)
 
     def _switch(self, pid):
+        _log.info("auto-switch: applying profile %s", pid)
         self._apply(pid)
         self.switched.emit(pid)

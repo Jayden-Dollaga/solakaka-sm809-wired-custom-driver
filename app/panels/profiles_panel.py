@@ -38,10 +38,12 @@ class ProfilesPanel(QWidget):
     delete_requested = Signal()
     import_requested = Signal()
     export_requested = Signal()
+    manage_apps_requested = Signal(str)     # profile id -> open Auto-Switch
 
     def __init__(self):
         super().__init__()
         self._loading = False
+        self._rules_by_pid = {}     # pid -> auto-switch match rules
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(28, 24, 28, 24)
@@ -83,6 +85,7 @@ class ProfilesPanel(QWidget):
         self.list.setDefaultDropAction(Qt.MoveAction)
         self.list.setSelectionMode(QAbstractItemView.SingleSelection)
         self.list.itemDoubleClicked.connect(self._on_activate)
+        self.list.currentItemChanged.connect(self._on_current_changed)
         self.list.model().rowsMoved.connect(self._on_rows_moved)
         lay.addWidget(self.list, 1)
 
@@ -93,6 +96,20 @@ class ProfilesPanel(QWidget):
         self.empty.setWordWrap(True)
         self.empty.hide()
         lay.addWidget(self.empty)
+
+        # Custom apps belong to one profile at a time; selecting a row shows
+        # that profile's list so it is obvious where auto-switch rules live.
+        apps_row = QHBoxLayout()
+        self.apps_hint = QLabel("")
+        self.apps_hint.setProperty("cardHint", "true")
+        self.apps_hint.setWordWrap(True)
+        apps_row.addWidget(self.apps_hint, 1)
+        self.manage_apps_btn = QPushButton("Manage apps…")
+        self.manage_apps_btn.setToolTip(
+            "Open Auto-Switch with this profile selected")
+        self.manage_apps_btn.clicked.connect(self._on_manage_apps)
+        apps_row.addWidget(self.manage_apps_btn)
+        lay.addLayout(apps_row)
 
         # management actions (moved here from the rail menu)
         btns = QHBoxLayout()
@@ -134,11 +151,17 @@ class ProfilesPanel(QWidget):
     def set_profiles(self, profiles, active_id, sort_key="custom"):
         keep = self.selected_id()      # survive a refresh (e.g. after Rename)
         self._loading = True
+        self._rules_by_pid = {p["id"]: [dict(r) for r in p.get("match_rules", [])]
+                              for p in profiles}
         self.list.clear()
         active_row = keep_row = -1
         for p in profiles:
             it = QListWidgetItem(p["name"])
             it.setData(Qt.UserRole, p["id"])
+            apps = self._app_names(p["id"])
+            it.setToolTip(
+                "Custom apps: " + ", ".join(apps) if apps
+                else "No custom apps assigned (see Manage apps…)")
             if p["id"] == active_id:
                 # A fresh item's font() has pointSize -1 ("inherit"), and Qt
                 # logs QFont::setPointSize: Point size <= 0 when that is made
@@ -168,11 +191,66 @@ class ProfilesPanel(QWidget):
         self.sort.blockSignals(False)
         self._loading = False
         self._apply_filter(self.search.text())
+        self._update_apps_hint()
 
     def selected_id(self):
         """The id of the highlighted list row (the management target), or None."""
         it = self.list.currentItem()
         return it.data(Qt.UserRole) if it is not None else None
+
+    def set_match_rules(self, pid, rules):
+        """Update one profile's custom apps without rebuilding the whole list
+        (the Auto-Switch tab just edited them; keep this tab in step)."""
+        self._rules_by_pid[pid] = [dict(r) for r in rules]
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            if it.data(Qt.UserRole) != pid:
+                continue
+            apps = self._app_names(pid)
+            it.setToolTip(
+                "Custom apps: " + ", ".join(apps) if apps
+                else "No custom apps assigned (see Manage apps…)")
+            break
+        self._update_apps_hint()
+
+    # -- custom-app summary ---------------------------------------------------
+    def _app_names(self, pid):
+        names = []
+        for r in self._rules_by_pid.get(pid, []):
+            label = (r.get("exe") or r.get("path") or r.get("title") or "").strip()
+            if label and label not in names:
+                names.append(label)
+        return names
+
+    def _update_apps_hint(self):
+        pid = self.selected_id()
+        item = self.list.currentItem()
+        if not pid or item is None:
+            self.apps_hint.setText("Select a profile to see its custom apps.")
+            self.manage_apps_btn.setEnabled(False)
+            return
+        names = self._app_names(pid)
+        if names:
+            shown = ", ".join(names[:3])
+            if len(names) > 3:
+                shown += f" +{len(names) - 3} more"
+            self.apps_hint.setText(
+                f"Custom apps for {item.text()}: {shown}")
+        else:
+            self.apps_hint.setText(
+                f"No custom apps for {item.text()}. Use Manage apps… to add the "
+                "game(s) this profile should switch to.")
+        self.manage_apps_btn.setEnabled(True)
+
+    def _on_current_changed(self, *_):
+        if self._loading:
+            return
+        self._update_apps_hint()
+
+    def _on_manage_apps(self):
+        pid = self.selected_id()
+        if pid:
+            self.manage_apps_requested.emit(pid)
 
     # -- internals ------------------------------------------------------------
     def _ids_in_order(self):
