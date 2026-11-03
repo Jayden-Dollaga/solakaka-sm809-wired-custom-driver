@@ -824,9 +824,23 @@ def high_dpi_mask(profile: Profile, sensor: int) -> int:
     return mask & 0xFF
 
 
-def status_frame(profile: Profile) -> bytes:
-    # FUN_004196b0: byte 3 carries the lift-off flag, byte 4 is the 0x40 marker.
-    return frame(0x03, (0x00, 0x00, 0x08 if profile.lift == 1 else 0x00, 0x40, 0, 0))
+def status_frame(profile: Profile, reply: bytes | None = None) -> bytes:
+    """The 0x03 status set that follows the 0x83 query (FUN_004196b0).
+
+    On the wire the official app does NOT send constants here: in every USB
+    capture (52 apply cycles, Office and Game mode) the frame is
+    ``03 02 0F F2 40 00 00 <chk>``, i.e. bytes 1-3 and 5-6 are copied from the
+    device's own reply to the 0x83 query (``83 02 0F F2 40 00 00``), byte 3 keeps
+    the reply's other bits with bit 3 following the lift-off flag, and byte 4 is
+    forced to the 0x40 marker.  Pass the de-obfuscated reply to reproduce that.
+    Without a usable reply (demo mode, short or foreign reply) this falls back to
+    the old constant frame.
+    """
+    lift = 0x08 if profile.lift == 1 else 0x00
+    if reply is not None and len(reply) >= 7 and reply[0] == 0x83:
+        return frame(0x03, (reply[1], reply[2], (reply[3] & 0xF7) | lift,
+                            0x40, reply[5], reply[6]))
+    return frame(0x03, (0x00, 0x00, lift, 0x40, 0, 0))
 
 
 def lod_frame(profile: Profile, config: DeviceConfig) -> bytes:

@@ -623,6 +623,12 @@ of the reference UI are not present in this app.
 - Applies are diffed section by section against what this link last wrote. A
   switch that only changes DPI sends just those frames; applying an identical
   profile sends no HID traffic at all.
+- Each apply starts with the vendor's status pair: a `0x83` query, then a `0x03`
+  frame whose bytes 1-3 and 5-6 echo the device's reply, byte 3 carrying the
+  lift-off flag while keeping the reply's other bits, and byte 4 fixed at `0x40`.
+  Without a usable reply (demo/offline, short or foreign reply) the constant
+  legacy frame is sent instead. Captured Office/Game cycles are pinned by
+  `tests/test_capture_regression.py`.
 - The diff cache resets on connect/disconnect and after a failed write, when the
   device state is unknown.
 - A full switch with many sections or macros takes roughly 0.5-1.5 s. That is
@@ -901,13 +907,14 @@ packages.
 
 ### Coverage by file
 
-The studio suite contains **175 tests**:
+The studio suite contains **181 tests**:
 
 | File | Tests | Focus |
 | --- | ---: | --- |
 | `test_core.py` | 17 | Seed/data, profile limits, config round-trip, `.pbin` parity, wheel swap, monitor reads, key/slot ordering |
 | `test_gui_smoke.py` | 22 | Full window in demo mode, every page at minimum width, lighting debounce, mode/DPI push, Apply modes, log panel, shared table budget |
 | `test_autoswitch.py` | 21 | Rule matching, priority, debounce/revert, running-app picker, 3-second detect, browse, elevation hint |
+| `test_capture_regression.py` | 6 | Byte-exact Office/Game apply cycles captured from the official app with USBPcap, including the echoed 0x03 status frame |
 | `test_dpi_stage_selection.py` | 8 | Disabled stages, relative selection, device pushes, clamping |
 | `test_elevation.py` | 5 | Admin detection, relaunch matrix, declined UAC, sentinel |
 | `test_guns.py` | 11 | Encoding budget, zero-movement rejection, store adoption, binding round-trip, recorder trimming |
@@ -1015,7 +1022,7 @@ sm809-wired-studio/
 ├── logs/                      # studio.log + rotations (created on first run)
 ├── backups/                   # optional manual backups (never bundled)
 ├── build/ dist/               # PyInstaller work/output (git-ignored)
-└── tests/                     # 175 offline tests (see above)
+└── tests/                     # 181 offline tests (see above)
 ```
 
 ---

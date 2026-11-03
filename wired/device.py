@@ -286,9 +286,9 @@ class DeviceService:
         GetFeature ignores its input buffer, so nothing is transmitted for it.
         """
         self.send_feature(frame(0x83))
-        self.read_feature()  # reply intentionally discarded
+        reply = self.read_feature()   # echoed into the 0x03 frame, like the official app
         profile = self.store.profile if self.store else Profile()
-        self.send_feature(status_frame(profile))
+        self.send_feature(status_frame(profile, reply))
 
     def read_version(self) -> tuple[int, int] | None:
         """FUN_0041b850: query firmware version; returns (ver_h, ver_l)."""
@@ -513,8 +513,8 @@ class DeviceService:
         # FUN_004196b0 status frames run before the profile body.
         self._phase = "status"
         self.send_feature(frame(0x83))
-        self.read_feature()
-        self.send_feature(status_frame(prof))
+        reply = self.read_feature()
+        self.send_feature(status_frame(prof, reply))
 
         # FUN_00418a40 body, in the vendor's order.
         if "mode" in changed:
@@ -726,8 +726,8 @@ class DeviceService:
             # FUN_004196b0 status frames run before the profile body.
             self._phase = "status"
             self.send_feature(frame(0x83))
-            self.read_feature()
-            self.send_feature(status_frame(prof))
+            reply = self.read_feature()
+            self.send_feature(status_frame(prof, reply))
             self._phase = "dpi"
             self.send_feature(dpi[0])
             self.send_block(dpi[1])
