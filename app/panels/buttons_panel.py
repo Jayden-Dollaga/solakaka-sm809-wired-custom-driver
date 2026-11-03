@@ -282,7 +282,7 @@ class ButtonsPanel(QWidget):
 
     # -- mode -----------------------------------------------------------------
     def set_manual_apply(self, manual):
-        """Reflect manual (--verbose) apply mode in the helper text."""
+        """Reflect the manual/auto apply mode in the helper text."""
         manual = bool(manual)
         self._sub.setText(self._SUB_MANUAL if manual else self._SUB_AUTO)
         self._hint.setText(self._HINT_MANUAL if manual else self._HINT_AUTO)

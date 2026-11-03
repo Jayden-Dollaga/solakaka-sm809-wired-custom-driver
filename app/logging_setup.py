@@ -119,6 +119,11 @@ def default_log_dir() -> str:
         return fallback
 
 
+def log_file_path() -> str:
+    """Where the file handler writes (even when this build could not open it)."""
+    return os.path.join(default_log_dir(), _FILE_NAME)
+
+
 def _console_handler(verbose: bool) -> logging.Handler:
     handler = RepeatCollapsingHandler(sys.stdout)
     handler.setLevel(logging.DEBUG if verbose else logging.INFO)

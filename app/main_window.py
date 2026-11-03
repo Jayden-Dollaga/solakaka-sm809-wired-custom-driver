@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem, QStackedWidget, QFrame, QLabel, QPushButton, QMessageBox,
     QSizePolicy, QAbstractItemView, QComboBox, QInputDialog, QMenu,
     QFileDialog, QSystemTrayIcon, QDialog, QCheckBox, QSlider, QDialogButtonBox,
-    QGroupBox,
+    QGroupBox, QRadioButton, QScrollArea, QSplitter,
 )
 
 from . import theme
@@ -37,6 +37,7 @@ from .gun_store import GunStore
 from .profile_store import ProfileStore, default_config
 from .autoswitch import AutoSwitcher
 from .widgets.overlay import Overlay, AlertOverlay, POSITIONS, POSITION_LABELS
+from .widgets.log_panel import LogPanel
 from .paths import resource_path
 from .widgets.action_picker import set_macro_resolver
 
@@ -84,16 +85,17 @@ class TopBar(QFrame):
 
         lay.addStretch(1)
 
-        # manual Apply (vendor-driver style): shown only in --verbose mode, where
-        # edits are staged and written in one go when this button is clicked.
+        # Apply exists only in manual mode: auto mode writes every edit as it
+        # happens, so there is nothing to confirm.  Settings switches modes.
         self.apply_btn = QPushButton("Apply")
         self.apply_btn.setObjectName("applyBtn")
         self.apply_btn.setProperty("pending", False)
-        self.apply_btn.setToolTip(
-            "Write the current profile to the mouse. Edits are not applied "
-            "automatically while running with --verbose.")
+        self.apply_btn.setProperty("manual", False)
+        self.apply_btn.setToolTip("Manual apply: changes are staged until you click Apply.")
         self.apply_btn.hide()
         lay.addWidget(self.apply_btn)
+
+        # live log: enabled from Settings; the panel itself has a close ×
 
         # upload spinner: visible only while a config write is in flight
         self.spinner = QLabel("")
@@ -129,26 +131,32 @@ class TopBar(QFrame):
         # match the battery readout: plain mono text, 12px, no pill background
         return f"color: {color}; font-family: {theme.FONT_MONO}; font-size: 12px;"
 
+    def _repolish(self, widget):
+        style = widget.style()
+        style.unpolish(widget)
+        style.polish(widget)
+
     def set_manual_apply(self, enabled):
-        """Show the Apply button (verbose mode) or hide it (auto-apply mode)."""
-        self.apply_btn.setVisible(bool(enabled))
+        """Show Apply only in manual mode; auto mode writes as you edit."""
+        enabled = bool(enabled)
+        self.apply_btn.setProperty("manual", enabled)
+        self.apply_btn.setVisible(enabled)
         self.set_pending(False)
+        self._repolish(self.apply_btn)
 
     def set_pending(self, pending):
         """Mark staged edits so it is obvious the mouse has not been written."""
         pending = bool(pending)
-        if bool(self.apply_btn.property("pending")) == pending:
-            return
-        self.apply_btn.setProperty("pending", pending)
-        self.apply_btn.setText("Apply •" if pending else "Apply")
-        self.apply_btn.setToolTip(
-            "Pending changes: click to write the current profile to the mouse."
-            if pending else
-            "Write the current profile to the mouse. Edits are not applied "
-            "automatically while running with --verbose.")
-        style = self.apply_btn.style()
-        style.unpolish(self.apply_btn)
-        style.polish(self.apply_btn)
+        if bool(self.apply_btn.property("pending")) != pending:
+            self.apply_btn.setProperty("pending", pending)
+            self.apply_btn.setText("Apply •" if pending else "Apply")
+            self._repolish(self.apply_btn)
+        if pending:
+            self.apply_btn.setToolTip(
+                "Pending changes: click to write the current profile to the mouse.")
+        else:
+            self.apply_btn.setToolTip(
+                "Manual apply: changes are staged until you click Apply.")
 
     def _stat(self, caption, value_obj_name):
         # a tightly-spaced caption+value pair; the bar then spaces groups evenly
@@ -239,11 +247,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.demo = bool(demo)
         self.verbose = bool(verbose)
-        # Manual apply mode (--verbose): panel edits are staged in the profile
-        # store but nothing is sent to the mouse until the top-bar Apply button
-        # is clicked. This mirrors the vendor driver and makes it possible to
-        # test a complete change set on real hardware.
-        self.manual_apply = self.verbose
+        # Apply mode is a saved setting (auto by default). --verbose still
+        # starts in manual mode for diagnostics; the Settings dialog can change
+        # it for this and future sessions.
         self._pending_apply = False
         self.setWindowTitle("SOLAKAKA SM809 Wired — Studio")
         self.setWindowIcon(app_icon())
@@ -259,6 +265,8 @@ class MainWindow(QMainWindow):
 
         # profile store (host-side source of truth; makes bindings persist)
         self.profiles = ProfileStore()
+        self.manual_apply = bool(
+            self.verbose or self.profiles.get_setting("manual_apply", False))
         self._current_config = None
         self._pushed_pid = None      # profile id most recently written to the device
         self._pushed_config = None   # exact config of that write (to skip no-ops)
@@ -270,10 +278,18 @@ class MainWindow(QMainWindow):
         self.topbar.apply_btn.clicked.connect(self._manual_apply_now)
         outer.addWidget(self.topbar)
 
-        body = QHBoxLayout()
+        # Body (rail + panels) and the optional log panel share a splitter, so
+        # the log can be resized or closed without disturbing the pages.
+        body_host = QWidget()
+        body = QHBoxLayout(body_host)
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
-        outer.addLayout(body, 1)
+
+        self.body_split = QSplitter(Qt.Vertical)
+        self.body_split.setChildrenCollapsible(False)
+        self.body_split.addWidget(body_host)
+        self.body_split.setStretchFactor(0, 1)
+        outer.addWidget(self.body_split, 1)
 
         # ---- left rail: full-height surface; nav at top, reset near bottom ----
         rail = QFrame()
@@ -444,6 +460,15 @@ class MainWindow(QMainWindow):
                                   lambda: self._applied_id)
         self._auto.set_base(self._applied_id)
         self._auto.switched.connect(self._on_auto_switched)
+
+        # Live log panel: hidden until Settings enables it.
+        self.log_panel = LogPanel()
+        self.log_panel.close_requested.connect(self._close_log_panel)
+        self.body_split.addWidget(self.log_panel)
+        self.body_split.setStretchFactor(1, 0)
+        self._show_log = bool(self.profiles.get_setting("show_log", self.verbose))
+        self._set_log_visible(self._show_log, persist=False)
+
         self._setup_tray()
         if self.profiles.get_setting("auto_switch", False):
             self._auto.set_enabled(True)
@@ -719,8 +744,8 @@ class MainWindow(QMainWindow):
         """Persist the in-memory config into its wired profile and queue a
         complete device write. The wired firmware has no partial commands.
 
-        In manual-apply mode (``--verbose``) the profile is updated on disk but
-        the mouse write is deferred until the top-bar Apply button is clicked.
+        In manual-apply mode the profile is updated on disk but the mouse
+        write is deferred until the top-bar Apply button is clicked.
         """
         pid = self._applied_id or self.profiles.active_id
         if pid is None or self._current_config is None:
@@ -745,8 +770,30 @@ class MainWindow(QMainWindow):
             self.topbar.set_pending(True)
             _log.info("edit staged; click Apply to write it to the mouse")
 
+    def set_manual_apply(self, enabled, persist=True):
+        """Switch between auto-apply and manual-apply for every page.
+
+        Turning auto-apply on writes any staged edits immediately, so the user
+        never ends up with changes that only exist on disk.
+        """
+        enabled = bool(enabled)
+        pending = self._pending_apply
+        self.manual_apply = enabled
+        if persist:
+            self.profiles.set_setting("manual_apply", enabled)
+        self.topbar.set_manual_apply(enabled)
+        self.buttons_panel.set_manual_apply(enabled)
+        self.performance_panel.set_manual_apply(enabled)
+        _log.info("apply mode: %s", "manual" if enabled else "auto")
+        if pending and not enabled:
+            _log.info("auto-apply selected; writing staged changes now")
+            self._pending_apply = False
+            self.topbar.set_pending(False)
+            if self._current_config is not None:
+                self.apply_profile(self._current_config, force=True, reseed=False)
+
     def _manual_apply_now(self):
-        """Verbose/dev Apply: write the complete staged config to the mouse."""
+        """Write the current (or staged) config to the mouse now."""
         if self._current_config is None:
             return
         if self._pending_apply:
@@ -1277,7 +1324,7 @@ class MainWindow(QMainWindow):
         self.tray_dpi_osd.setChecked(self._dpi_osd)
         self.tray_dpi_osd.toggled.connect(self._toggle_dpi_osd)
         menu.addAction(self.tray_dpi_osd)
-        menu.addAction("Overlay settings…", self._overlay_settings)
+        menu.addAction("Settings…", self._settings)
         menu.addSeparator()
         from . import autostart
         if autostart.supported():
@@ -1373,26 +1420,98 @@ class MainWindow(QMainWindow):
             act.setChecked(bool(on))
             act.blockSignals(False)
 
-    def _overlay_settings(self):
-        """Configure what the overlay shows + its position / transparency / size."""
+    def _set_log_visible(self, on, persist=True):
+        """Show/hide the bottom log panel (enabled from Settings)."""
+        on = bool(on)
+        self._show_log = on
+        if on:
+            self.log_panel.start()
+            self.log_panel.show()
+            sizes = self.body_split.sizes()
+            if len(sizes) != 2 or sizes[1] < 100:
+                total = sum(sizes) or max(self.height() - 56, 560)
+                self.body_split.setSizes([max(240, total - 190), 190])
+        else:
+            self.log_panel.hide()
+        if persist:
+            self.profiles.set_setting("show_log", on)
+
+    def _close_log_panel(self):
+        self._set_log_visible(False)
+
+    def _settings(self):
+        """All studio settings: apply mode, live log, and the overlay HUD."""
         dlg = QDialog(self)
-        dlg.setWindowTitle("Overlay settings")
-        lay = QVBoxLayout(dlg)
-        lay.setSpacing(10)
+        dlg.setWindowTitle("Settings")
+        dlg.resize(500, 700)
+
+        shell = QVBoxLayout(dlg)
+        shell.setSpacing(10)
+
+        scroll = QScrollArea()
+        scroll.setObjectName("settingsScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        content = QWidget()
+        lay = QVBoxLayout(content)
+        lay.setContentsMargins(14, 10, 14, 10)
+        lay.setSpacing(12)
+        scroll.setWidget(content)
+        shell.addWidget(scroll, 1)
+
+        # -- apply mode: one choice for every page and setting --
+        apply_grp = QGroupBox("Applying changes")
+        al = QVBoxLayout(apply_grp)
+        rb_auto = QRadioButton("Auto-apply \u2014 write every change immediately")
+        rb_manual = QRadioButton("Manual apply \u2014 stage changes, then press Apply")
+        (rb_manual if self.manual_apply else rb_auto).setChecked(True)
+        al.addWidget(rb_auto)
+        al.addWidget(rb_manual)
+        apply_hint = QLabel(
+            "This setting applies to every page. In manual apply the Apply "
+            "button appears in the top bar; auto-apply hides it because every "
+            "edit is written straight away.")
+        apply_hint.setProperty("cardHint", "true")
+        apply_hint.setWordWrap(True)
+        al.addWidget(apply_hint)
+        lay.addWidget(apply_grp)
+
+        # -- live log panel --
+        log_grp = QGroupBox("Live log")
+        ll = QVBoxLayout(log_grp)
+        show_log = QCheckBox("Show the live log panel")
+        show_log.setChecked(self._show_log)
+        ll.addWidget(show_log)
+        log_hint = QLabel(
+            "The panel mirrors logs/studio.log while the studio runs. Close it "
+            "with ×; turn it back on here.")
+        log_hint.setProperty("cardHint", "true")
+        log_hint.setWordWrap(True)
+        ll.addWidget(log_hint)
+        open_log = QPushButton("Open log file")
+        open_log.clicked.connect(self.log_panel.open_log_file)
+        ll.addWidget(open_log, 0, Qt.AlignLeft)
+        lay.addWidget(log_grp)
+
+        # -- overlay --
+        overlay_grp = QGroupBox("On-screen overlay")
+        ol = QVBoxLayout(overlay_grp)
 
         enable = QCheckBox("Show on-screen overlay")
         enable.setChecked(self._overlay_enabled)
-        lay.addWidget(enable)
+        ol.addWidget(enable)
 
-        grp = QGroupBox("Show on change")
-        gl = QVBoxLayout(grp)
-        cb_prof = QCheckBox("Profile name"); cb_prof.setChecked(self._overlay_show.get("profile", True))
+        cap = QLabel("SHOW ON CHANGE")
+        cap.setProperty("groupLabel", "true")
+        ol.addWidget(cap)
+        cb_prof = QCheckBox("Profile name")
+        cb_prof.setChecked(self._overlay_show.get("profile", True))
         cb_dpi = QCheckBox("DPI (including the mouse's DPI buttons)")
         cb_dpi.setChecked(self._dpi_osd)
-        cb_rate = QCheckBox("Polling rate"); cb_rate.setChecked(self._overlay_show.get("rate", False))
+        cb_rate = QCheckBox("Polling rate")
+        cb_rate.setChecked(self._overlay_show.get("rate", False))
         for c in (cb_prof, cb_dpi, cb_rate):
-            gl.addWidget(c)
-        lay.addWidget(grp)
+            ol.addWidget(c)
 
         prow = QHBoxLayout()
         prow.addWidget(QLabel("Position"))
@@ -1402,12 +1521,12 @@ class MainWindow(QMainWindow):
         i = pos.findData(self.profiles.get_setting("overlay_pos", "bottom-center"))
         pos.setCurrentIndex(i if i >= 0 else POSITIONS.index("bottom-center"))
         prow.addWidget(pos, 1)
-        lay.addLayout(prow)
+        ol.addLayout(prow)
 
         # monitor: follow the cursor's monitor, or pin to a chosen one
         follow = QCheckBox("Show on the monitor under the cursor")
         follow.setChecked(bool(self.profiles.get_setting("overlay_follow_cursor", True)))
-        lay.addWidget(follow)
+        ol.addWidget(follow)
         mrow = QHBoxLayout()
         mrow.addWidget(QLabel("Monitor"))
         mon = QComboBox()
@@ -1420,28 +1539,28 @@ class MainWindow(QMainWindow):
         mon.setEnabled(not follow.isChecked())
         follow.toggled.connect(lambda on: mon.setEnabled(not on))
         mrow.addWidget(mon, 1)
-        lay.addLayout(mrow)
+        ol.addLayout(mrow)
 
         op_lbl = QLabel()
         op = QSlider(Qt.Horizontal); op.setRange(30, 100)
         op.setValue(int(self.profiles.get_setting("overlay_opacity", 92)))
         op.valueChanged.connect(lambda v: op_lbl.setText(f"Transparency (opacity): {v}%"))
         op.valueChanged.emit(op.value())
-        lay.addWidget(op_lbl); lay.addWidget(op)
+        ol.addWidget(op_lbl); ol.addWidget(op)
 
         sc_lbl = QLabel()
         sc = QSlider(Qt.Horizontal); sc.setRange(60, 200)
         sc.setValue(int(self.profiles.get_setting("overlay_scale", 100)))
         sc.valueChanged.connect(lambda v: sc_lbl.setText(f"Size: {v}%"))
         sc.valueChanged.emit(sc.value())
-        lay.addWidget(sc_lbl); lay.addWidget(sc)
+        ol.addWidget(sc_lbl); ol.addWidget(sc)
 
         dur_lbl = QLabel()
         dur = QSlider(Qt.Horizontal); dur.setRange(3, 50)   # 0.3s .. 5.0s (x100ms)
         dur.setValue(int(self.profiles.get_setting("overlay_hold", 1400)) // 100)
         dur.valueChanged.connect(lambda v: dur_lbl.setText(f"Duration on screen: {v / 10:.1f} s"))
         dur.valueChanged.emit(dur.value())
-        lay.addWidget(dur_lbl); lay.addWidget(dur)
+        ol.addWidget(dur_lbl); ol.addWidget(dur)
 
         def _preview():
             self.overlay.set_appearance(pos.currentData(), op.value(), sc.value(),
@@ -1460,19 +1579,25 @@ class MainWindow(QMainWindow):
 
         prev = QPushButton("Preview")
         prev.clicked.connect(_preview)
-        lay.addWidget(prev)
+        ol.addWidget(prev)
+        lay.addWidget(overlay_grp)
+        lay.addStretch(1)
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(dlg.accept); bb.rejected.connect(dlg.reject)
-        lay.addWidget(bb)
+        shell.addWidget(bb)
 
         if dlg.exec() == QDialog.Accepted:
+            manual = rb_manual.isChecked()
+            show_live_log = show_log.isChecked()
             self._overlay_show = {"profile": cb_prof.isChecked(),
                                   "dpi": cb_dpi.isChecked(), "rate": cb_rate.isChecked()}
             self._dpi_osd = cb_dpi.isChecked()
             self._sync_dpi_osd_ui(self._dpi_osd)
             # one sidecar write for the whole dialog, not one per control
             self.profiles.set_settings({
+                "manual_apply": manual,
+                "show_log": show_live_log,
                 "dpi_osd": self._dpi_osd,
                 "overlay_show": self._overlay_show,
                 "overlay_pos": pos.currentData(),
@@ -1482,6 +1607,8 @@ class MainWindow(QMainWindow):
                 "overlay_follow_cursor": follow.isChecked(),
                 "overlay_monitor": mon.currentData() or 0,
             })
+            self.set_manual_apply(manual, persist=False)
+            self._set_log_visible(show_live_log, persist=False)
             self._apply_overlay_appearance()      # applies to overlay + alert overlay
             if enable.isChecked() != self._overlay_enabled:
                 self._toggle_overlay(enable.isChecked())

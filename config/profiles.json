@@ -457,6 +457,20 @@
   "settings": {
     "auto_switch": true,
     "window_geometry": "AdnQywADAAAAAAGxAAAAPQAABlgAAAPHAAABsQAAAFwAAAZYAAADxwAAAAAAAAAAB4AAAAGxAAAAXAAABlgAAAPH",
-    "overlay": false
+    "overlay": false,
+    "manual_apply": true,
+    "show_log": false,
+    "dpi_osd": true,
+    "overlay_show": {
+      "profile": true,
+      "dpi": true,
+      "rate": false
+    },
+    "overlay_pos": "bottom-right",
+    "overlay_opacity": 92,
+    "overlay_scale": 100,
+    "overlay_hold": 1400,
+    "overlay_follow_cursor": true,
+    "overlay_monitor": 0
   }
 }

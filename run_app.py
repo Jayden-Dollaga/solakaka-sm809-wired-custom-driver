@@ -74,6 +74,9 @@ def main():
     # startup) should land in logs/studio.log, not a bare stderr line.
     verbose = ("--verbose" in sys.argv or "-v" in sys.argv)
     log_path = setup_logging(verbose=verbose)
+    # Stream the same records into the optional in-app log panel.
+    from app.log_bridge import install as install_log_bridge
+    install_log_bridge(logging.DEBUG if verbose else logging.INFO)
     log = logging.getLogger("sm809.app")
     demo = "--demo" in sys.argv
     log.info("SM809 Wired Studio starting (demo=%s)", demo)

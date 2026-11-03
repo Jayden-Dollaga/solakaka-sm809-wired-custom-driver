@@ -210,7 +210,7 @@ class PerformancePanel(QWidget):
 
     # -- helpers --------------------------------------------------------------
     def set_manual_apply(self, manual):
-        """Reflect manual (--verbose) apply mode in the helper text."""
+        """Reflect the manual/auto apply mode in the helper text."""
         if manual:
             self._sub.setText(
                 "Polling rate and Windows pointer behaviour, matching the "

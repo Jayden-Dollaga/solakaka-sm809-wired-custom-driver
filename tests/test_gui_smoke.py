@@ -404,6 +404,93 @@ def test_verbose_manual_apply_stages_until_the_button(
         qapp.processEvents()
 
 
+def test_apply_button_only_exists_in_manual_mode(qapp, tmp_path, monkeypatch):
+    """Auto-apply writes as you edit, so no Apply button is shown."""
+    win = _make_window(qapp, tmp_path, monkeypatch)
+    try:
+        assert not win.manual_apply
+        assert win.topbar.apply_btn.isHidden()
+        assert win.topbar.apply_btn.property("manual") is False
+
+        # switching to manual makes the button appear
+        win.set_manual_apply(True)
+        assert not win.topbar.apply_btn.isHidden()
+        assert win.topbar.apply_btn.text() == "Apply"
+
+        writes = []
+        win.ctrl.call = lambda *a, **k: writes.append(a[0])
+        win.topbar.apply_btn.click()
+        assert writes == ["apply_config"]
+
+        # back to auto: the button goes away again
+        win.set_manual_apply(False)
+        assert win.topbar.apply_btn.isHidden()
+    finally:
+        win._force_quit = True
+        win.close()
+        qapp.processEvents()
+
+
+def test_apply_mode_setting_persists_and_flushes_pending(
+        qapp, tmp_path, monkeypatch):
+    """Settings can switch every page to manual, and back to auto without
+    losing a staged edit."""
+    from sm809pro import actions as A
+
+    win = _make_window(qapp, tmp_path, monkeypatch)
+    try:
+        win.set_manual_apply(True)
+        assert win.manual_apply
+        assert win.profiles.get_setting("manual_apply") is True
+        assert win.topbar.apply_btn.property("manual") is True
+        assert not win.topbar.apply_btn.isHidden()
+
+        writes = []
+        win.ctrl.call = lambda *a, **k: writes.append(a[0])
+        panel = win.buttons_panel
+        slot = panel.rows[6].slot
+        win.buttons_panel.set_binding(slot, (0x0B, 0, 0))
+        win.buttons_panel._on_button_changed(slot)
+        assert writes == []                       # staged, not sent
+        assert win._pending_apply
+
+        # switching to auto-apply must write what was staged
+        win.set_manual_apply(False)
+        assert not win.manual_apply
+        assert win.profiles.get_setting("manual_apply") is False
+        assert writes == ["apply_config"]
+        assert not win._pending_apply
+        assert win.topbar.apply_btn.property("pending") is False
+        assert win.topbar.apply_btn.isHidden()
+    finally:
+        win._force_quit = True
+        win.close()
+        qapp.processEvents()
+
+
+def test_log_panel_is_controlled_from_settings(
+        qapp, tmp_path, monkeypatch):
+    """The log has no top-bar or tray toggle: Settings turns it on, the panel
+    × closes it."""
+    win = _make_window(qapp, tmp_path, monkeypatch)
+    try:
+        assert win.log_panel.isHidden()
+        assert not hasattr(win.topbar, "log_btn")
+        assert not hasattr(win, "tray_log")
+
+        win._set_log_visible(True)          # Settings enables it
+        assert not win.log_panel.isHidden()
+        assert win.profiles.get_setting("show_log") is True
+
+        win.log_panel.close_btn.click()     # the panel's × closes it
+        assert win.log_panel.isHidden()
+        assert win.profiles.get_setting("show_log") is False
+    finally:
+        win._force_quit = True
+        win.close()
+        qapp.processEvents()
+
+
 def test_connect_push_does_not_reset_a_pending_pointer_edit(
         qapp, tmp_path, monkeypatch):
     """A slider moved while the device connects must survive the connect push.

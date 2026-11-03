@@ -202,7 +202,7 @@ def stylesheet() -> str:
         color: {WARN};
     }}
 
-    /* ---- Manual Apply (top bar, --verbose developer mode) ---- */
+    /* ---- Apply button (top bar, both apply modes) ---- */
     QPushButton#applyBtn {{
         background: transparent;
         border: 1px solid {ACCENT};
@@ -210,6 +210,14 @@ def stylesheet() -> str:
         padding: 6px 16px;
         color: {ACCENT};
         font-weight: 600;
+    }}
+    QPushButton#applyBtn[manual="false"] {{
+        border-color: {BORDER};
+        color: {TEXT_DIM};
+    }}
+    QPushButton#applyBtn[manual="false"]:hover {{
+        border-color: {ACCENT};
+        color: {ACCENT};
     }}
     QPushButton#applyBtn:hover {{
         background: {SURFACE_2};
@@ -223,6 +231,70 @@ def stylesheet() -> str:
     }}
     QPushButton#applyBtn[pending="true"]:hover {{
         background: #ff7d4d;
+    }}
+
+    /* ---- Live log panel (bottom dock) ---- */
+    QFrame#logPanel {{
+        background: {SURFACE};
+        border-top: 1px solid {BORDER};
+    }}
+    QLabel#logTitle {{
+        color: {TEXT_DIM};
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 1px;
+    }}
+    QPlainTextEdit#logView {{
+        background: {BG};
+        border: 1px solid {BORDER};
+        border-radius: 6px;
+        color: {TEXT_DIM};
+        font-family: {FONT_MONO};
+        font-size: 11px;
+        padding: 4px 6px;
+        selection-background-color: {ACCENT};
+        selection-color: #1a1008;
+    }}
+    QPushButton#logTool {{
+        background: transparent;
+        border: 1px solid {BORDER};
+        border-radius: 4px;
+        padding: 3px 8px;
+        color: {TEXT_DIM};
+        font-size: 11px;
+    }}
+    QPushButton#logTool:hover {{
+        border-color: {ACCENT_2};
+        color: {ACCENT_2};
+    }}
+    QPushButton#logClose {{
+        background: transparent;
+        border: none;
+        color: {TEXT_DIM};
+        font-size: 16px;
+        padding: 0px;
+    }}
+    QPushButton#logClose:hover {{
+        color: {BAD};
+    }}
+
+    /* ---- Settings dialog ---- */
+    QGroupBox {{
+        border: 1px solid {BORDER};
+        border-radius: 8px;
+        margin-top: 14px;
+        padding: 10px 8px 8px 8px;
+    }}
+    QGroupBox::title {{
+        subcontrol-origin: margin;
+        left: 10px;
+        padding: 0px 4px;
+        color: {TEXT_DIM};
+        font-weight: 600;
+    }}
+    QScrollArea#settingsScroll {{
+        background: transparent;
+        border: none;
     }}
 
     /* ---- Battery / status pill ---- */
