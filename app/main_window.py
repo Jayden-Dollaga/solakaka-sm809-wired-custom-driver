@@ -5,11 +5,16 @@ Top bar (device name + USB connection pill + live polling/DPI readout), a left
 navigation rail with a Reset-to-Factory action in its footer, and the reference
 stack of panels. Owns the wired DeviceController and the profile/macro stores.
 
-Nav order: Buttons, Macro, DPI, Lighting, Performance, Auto-Switch, Profiles.
+Nav order: Buttons, Macro, Recoil Control, Lighting, Performance, Profiles.
+DPI stages live inside Performance; per-app auto-switch opens as the Manage
+Apps dialog from the Profiles tab.  Recoil Control is a developer preview and
+is absent from the rail until the Settings switch is turned on.
 """
 
 import copy
 import logging
+import os
+from functools import lru_cache
 
 from PySide6.QtCore import Qt, QTimer, QByteArray
 from PySide6.QtGui import QAction, QIcon, QPixmap, QPainter, QColor, QGuiApplication
@@ -30,11 +35,15 @@ from .panels.lighting_panel import LightingPanel
 from .panels.performance_panel import PerformancePanel
 from .panels.macro_panel import MacroPanel
 from .panels.gun_panel import GunPanel
-from .panels.autoswitch_panel import AutoSwitchPanel
+from .panels.manage_apps_dialog import ManageAppsDialog
 from .panels.profiles_panel import ProfilesPanel
+from .file_import import (
+    ALL_SUPPORTED_FILTER, FileDropRouter, MACRO_FILTER, PROFILE_FILTER,
+    file_names, supported_hint, split_paths,
+)
 from .macro_store import MacroStore
 from .gun_store import GunStore
-from .profile_store import ProfileStore, default_config
+from .profile_store import ProfileStore, PROFILE_LIMIT, default_config
 from .autoswitch import AutoSwitcher
 from .widgets.overlay import Overlay, AlertOverlay, POSITIONS, POSITION_LABELS
 from .widgets.log_panel import LogPanel
@@ -44,13 +53,18 @@ from .widgets.action_picker import set_macro_resolver
 _log = logging.getLogger("sm809.app")
 
 # nav order requested by the user
-NAV_ITEMS = ["Buttons", "Macro", "Gun", "DPI", "Lighting", "Performance",
-             "Auto-Switch", "Profiles"]
+NAV_ITEMS = ["Buttons", "Macro", "Recoil Control", "Lighting",
+             "Performance", "Profiles"]
 
 
+@lru_cache(maxsize=1)
 def app_icon():
     """The application icon (window / taskbar / tray), bundled at
-    images/icon.ico (resolved frozen-safe via _MEIPASS)."""
+    images/icon.ico (resolved frozen-safe via _MEIPASS).
+
+    Qt decodes the .ico on construction; the window, tray and entry point all
+    ask for the same icon, so it is decoded once.
+    """
     return QIcon(resource_path("images", "icon.ico"))
 
 
@@ -267,6 +281,10 @@ class MainWindow(QMainWindow):
         self.profiles = ProfileStore()
         self.manual_apply = bool(
             self.verbose or self.profiles.get_setting("manual_apply", False))
+        # Recoil Control is still a work in progress.  Its rail page and picker
+        # category stay hidden until the Settings switch is turned on.
+        self.developer = bool(
+            self.profiles.get_setting("developer_features", False))
         self._current_config = None
         self._pushed_pid = None      # profile id most recently written to the device
         self._pushed_config = None   # exact config of that write (to skip no-ops)
@@ -306,8 +324,9 @@ class MainWindow(QMainWindow):
         self.nav = QListWidget()
         self.nav.setObjectName("nav")
         self.nav.setFrameShape(QFrame.NoFrame)
-        for name in NAV_ITEMS:
-            QListWidgetItem(name, self.nav)
+        # Rail rows are a filtered view of NAV_ITEMS; each row stores its
+        # stack index so hidden pages do not shift the mapping.
+        self._populate_nav()
         self.nav.currentRowChanged.connect(self._on_nav)
         # The rail gives the list all the space left by the profile bar and
         # the footer.  A short window (its 560 px minimum) cannot show eight
@@ -343,24 +362,29 @@ class MainWindow(QMainWindow):
         self.profiles.macro_events = lambda mid: (self.store.get(mid) or {}).get("events")
         self.profiles.gun_rows = lambda gid: (self.guns.get(gid) or {}).get("rows")
         self.buttons_panel = ButtonsPanel(get_macros=self.store.all,
-                                          get_guns=self.guns.all)
+                                          get_guns=self.guns.all,
+                                          developer=self.developer)
         self.buttons_panel.set_manual_apply(self.manual_apply)
         self.macro_panel = MacroPanel(self.store)
-        self.gun_panel = GunPanel(self.guns)
-        self.dpi_panel = DpiPanel()
+        self.gun_panel = GunPanel(self.guns, self.profiles.get_setting,
+                                  self.profiles.set_setting)
+        self.gun_panel.set_developer(self.developer)
+        self.dpi_panel = DpiPanel(embedded=True)
         self.lighting_panel = LightingPanel()
         self.performance_panel = PerformancePanel()
+        self.performance_panel.add_dpi_section(self.dpi_panel)
         self.performance_panel.set_manual_apply(self.manual_apply)
-        self.autoswitch_panel = AutoSwitchPanel()
+        # Auto-switch is not a page any more: the Profiles tab's "Manage apps…"
+        # opens this dialog, and the panel below is its content.
+        self.manage_apps_dialog = ManageAppsDialog(self)
+        self.autoswitch_panel = self.manage_apps_dialog.panel
         self.profiles_panel = ProfilesPanel()
         self.stack.addWidget(self.buttons_panel)         # 0 Buttons
         self.stack.addWidget(self.macro_panel)            # 1 Macro
         self.stack.addWidget(self.gun_panel)              # 2 Gun
-        self.stack.addWidget(self.dpi_panel)              # 3 DPI
-        self.stack.addWidget(self.lighting_panel)         # 4 Lighting
-        self.stack.addWidget(self.performance_panel)      # 5 Performance
-        self.stack.addWidget(self.autoswitch_panel)       # 6 Auto-Switch
-        self.stack.addWidget(self.profiles_panel)         # 7 Profiles
+        self.stack.addWidget(self.lighting_panel)         # 3 Lighting
+        self.stack.addWidget(self.performance_panel)      # 4 Performance
+        self.stack.addWidget(self.profiles_panel)         # 5 Profiles
         self.nav.setCurrentRow(0)
 
         # ---- controller ----
@@ -437,12 +461,23 @@ class MainWindow(QMainWindow):
             self._seed_panels(self._current_config)
         self._refresh_profile_combo()
 
+        # Drop supported files anywhere on the window (or the non-modal
+        # Manage Apps dialog). The router only claims drags carrying local
+        # file URLs, so the Profiles list keeps its internal reorder drag.
+        self._drop_router = FileDropRouter(self)
+        self._drop_router.files_dropped.connect(self._files_dropped)
+
         # on-screen overlay HUD (optional): flashes DPI / profile / rate changes.
         self.overlay = Overlay()
         self.alert_overlay = AlertOverlay()
         self._overlay_enabled = bool(self.profiles.get_setting("overlay", False))
         self._overlay_show = dict(self.profiles.get_setting(
             "overlay_show", {"profile": True, "dpi": True, "rate": False}))
+        # Profile switches are announced on the overlay instead of a Windows
+        # tray toast. This stays available even when the ambient overlay is
+        # off (DPI/rate cards), so the switch notice has its own switch.
+        self._overlay_switch = bool(self.profiles.get_setting(
+            "overlay_switch", True))
         # The original driver always shows a "DPI : <value>" card when the
         # stage changes (including the physical DPI buttons). Keep that on by
         # default and independent of the optional profile/polling overlay.
@@ -480,9 +515,59 @@ class MainWindow(QMainWindow):
         self.ctrl.start()
 
     # -- nav ------------------------------------------------------------------
+    def _nav_entries(self):
+        """The rail entries for the current feature set.
+
+        Recoil Control is a developer preview: its page and picker category
+        exist but stay out of the normal UI until Settings enables them.
+        """
+        return [name for name in NAV_ITEMS
+                if name != "Recoil Control" or self.developer]
+
+    def _populate_nav(self):
+        """Rebuild the rail without emitting a page change."""
+        self.nav.blockSignals(True)
+        self.nav.clear()
+        for name in self._nav_entries():
+            item = QListWidgetItem(name, self.nav)
+            # the stack keeps every page, so store the real index on the row
+            item.setData(Qt.UserRole, NAV_ITEMS.index(name))
+        self.nav.blockSignals(False)
+
+    def _page_name(self):
+        item = self.nav.currentItem()
+        return item.text() if item is not None else None
+
+    def _select_page(self, name):
+        """Show the named page; returns False when it is currently hidden."""
+        for row in range(self.nav.count()):
+            if self.nav.item(row).text() == name:
+                self.nav.setCurrentRow(row)
+                return True
+        return False
+
     def _on_nav(self, row):
-        if 0 <= row < self.stack.count():
-            self.stack.setCurrentIndex(row)
+        item = self.nav.item(row) if 0 <= row < self.nav.count() else None
+        idx = item.data(Qt.UserRole) if item is not None else None
+        if idx is not None and 0 <= int(idx) < self.stack.count():
+            self.stack.setCurrentIndex(int(idx))
+
+    def _set_developer(self, on, persist=True):
+        """Show/hide the Recoil Control preview page and picker category."""
+        on = bool(on)
+        if on == self.developer:
+            return
+        current = self._page_name()
+        self.developer = on
+        self.buttons_panel.set_developer(on)
+        self.gun_panel.set_developer(on)
+        self._populate_nav()
+        # Stay on the same page where possible; a page that just disappeared
+        # (Recoil Control) falls back to the first entry.
+        if not self._select_page(current or "Buttons"):
+            self.nav.setCurrentRow(0)
+        if persist:
+            self.profiles.set_setting("developer_features", on)
 
     # -- profiles -------------------------------------------------------------
     def _build_profile_bar(self):
@@ -505,26 +590,40 @@ class MainWindow(QMainWindow):
 
     def _refresh_profile_combo(self):
         """Rebuild the combo from the store without triggering a profile apply."""
-        # one cheap summary list feeds the combo, Auto-Switch and Profiles tabs
+        # one cheap summary list feeds the combo, Manage Apps and Profiles tabs
         # (loading every full config three times made this noticeably slow).
         profiles = self.profiles.summaries()
+        # Show the profile that is actually on the mouse. When auto-switch has
+        # overridden the manual base, a refresh (rename, reorder, rule edit…)
+        # must not snap the combo or the Profiles tab back to the base.
+        shown = self._shown_profile_id(profiles)
         self.profile_combo.blockSignals(True)
         self.profile_combo.clear()
-        active_idx = 0
+        shown_idx = 0
         for i, p in enumerate(profiles):
             self.profile_combo.addItem(p["name"], p["id"])
-            if p["id"] == self.profiles.active_id:
-                active_idx = i
-        self.profile_combo.setCurrentIndex(active_idx)
+            if p["id"] == shown:
+                shown_idx = i
+        self.profile_combo.setCurrentIndex(shown_idx)
         self.profile_combo.blockSignals(False)
-        # keep the Auto-Switch + Profiles tabs in sync
+        # keep the Manage Apps panel + Profiles tab in sync
         if hasattr(self, "autoswitch_panel"):
             self.autoswitch_panel.set_profiles(profiles,
                                                self.profiles.active_id)
         if hasattr(self, "profiles_panel"):
             self.profiles_panel.set_profiles(
-                profiles, self.profiles.active_id,
+                profiles, shown,
                 self.profiles.get_setting("profile_sort", "custom"))
+
+    def _shown_profile_id(self, profiles=None):
+        """The profile the rail combo + Profiles tab should highlight: the one
+        applied to the mouse (auto-switch override) and otherwise the manual
+        base. Falls back to the base if the applied id no longer exists."""
+        ids = {p["id"] for p in (profiles if profiles is not None
+                                 else self.profiles.summaries())}
+        if self._applied_id in ids:
+            return self._applied_id
+        return self.profiles.active_id
 
     def _on_profile_reorder(self, ids):
         self.profiles.reorder(ids)
@@ -557,11 +656,43 @@ class MainWindow(QMainWindow):
         self.overlay.flash_lines(lines)
 
     def _on_manage_apps(self, pid):
-        """Open Auto-Switch with this profile selected in its app list."""
+        """Open the Manage Apps popup with this profile selected."""
         if not pid:
             return
-        self.autoswitch_panel.select_profile(pid)
-        self.nav.setCurrentRow(NAV_ITEMS.index("Auto-Switch"))
+        self.manage_apps_dialog.show_for(
+            self.profiles.summaries(), pid, self._auto.is_enabled())
+        self._attach_native_drop(self.manage_apps_dialog)
+
+    # -- drop support while elevated -----------------------------------------
+    def enable_native_drop(self):
+        """Install the legacy drop bridge when Windows refuses OLE drops.
+
+        The studio elevates by default, and a high-integrity window cannot
+        receive Explorer's OLE drag (UIPI).  ``app.win_drop`` revokes the OLE
+        drop target and listens for WM_DROPFILES instead; the router then
+        imports the paths exactly like a normal drop.
+        """
+        if getattr(self, "_native_drop", None) is not None:
+            return self._native_drop
+        from .win_drop import attach_elevated_drop
+        bridge = attach_elevated_drop(self._drop_router, self)
+        self._native_drop = bridge
+        if bridge is not None:
+            # in-window drag reordering needs the OLE target we just revoked
+            self.profiles_panel.set_native_drop_mode(True)
+        return bridge
+
+    def _attach_native_drop(self, window):
+        bridge = getattr(self, "_native_drop", None)
+        if bridge is not None:
+            bridge.attach(window)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not getattr(self, "_native_drop_checked", False):
+            self._native_drop_checked = True
+            # winId()/the OLE target only exist once the window is shown
+            QTimer.singleShot(0, self.enable_native_drop)
 
     def _on_profile_selected(self, idx):
         # a MANUAL selection from the combo -> this becomes the sticky base
@@ -583,16 +714,17 @@ class MainWindow(QMainWindow):
         self._schedule_profile_save()      # batched sidecar write
         if getattr(self, "_auto", None) is not None:
             self._auto.set_base(pid)
-        # Keep the Auto-Switch tab on the profile the user just picked, so its
-        # custom-app list is the one they expect to see.
+        # Keep the Manage Apps dialog (if open) on the profile the user just
+        # picked, so its custom-app list is the one they expect to see.
         if hasattr(self, "autoswitch_panel"):
             self.autoswitch_panel.select_profile(pid)
         self._apply_by_id(pid)
 
     def _apply_by_id(self, pid):
         """Apply the profile `pid` to panels + device and mark it as what's
-        currently on the device. Does NOT change the manual base (so auto-switch
-        overrides revert correctly). Updates the combo display silently."""
+        currently on the device. Does NOT change the manual base (auto-switch
+        matches stay until another rule matches). Updates the combo display
+        silently."""
         prof = self.profiles.get(pid)
         if prof is None:
             return
@@ -600,28 +732,46 @@ class MainWindow(QMainWindow):
         self._applied_id = pid
         self._sync_combo(pid)
         self._cur_profile = prof["name"]
-        if (self._overlay_enabled and self._overlay_show.get("profile", True)
-                and changed and pid != self._prev_overlay_pid):
+        # The overlay IS the switch notification (there is no tray toast).
+        # ``overlay_switch`` is its own switch so a profile change is announced
+        # even when the ambient DPI/polling overlay is turned off.
+        notify = (changed and self._overlay_switch
+                  and pid != self._prev_overlay_pid)
+        if notify:
             # immediate "Switching to X" feedback while the writes are in flight
             # (useful when auto-switching from a fullscreen game); the detailed
             # card replaces it once the apply finishes (_on_busy_overlay).
             self.overlay.flash_lines([("Switching to", prof["name"])], hold_ms=5000)
-            self._overlay_pending = True
         self._prev_overlay_pid = pid
-        self.apply_profile(prof["config"], pid=pid)
+        queued = self.apply_profile(prof["config"], pid=pid)
+        # Only wait for the done signal when a write was actually queued.  A
+        # profile already on the device (or a skipped push) would otherwise
+        # leave the card on "Switching to…" until the next unrelated apply.
+        if notify:
+            self._overlay_pending = bool(queued)
+            if not queued:
+                self._overlay_flash(switch=True)
 
-    def _overlay_flash(self):
-        """Flash the overlay showing every ENABLED field's current value."""
-        if not self._overlay_enabled:
-            return
+    def _overlay_flash(self, switch=False):
+        """Flash the overlay for a finished apply.
+
+        ``switch=True`` is the profile-switch notification; it obeys the
+        dedicated ``overlay_switch`` setting so it works with the ambient
+        overlay off. Otherwise this is the DPI/polling status card, which
+        needs the ambient overlay enabled and follows "Profile name".
+        """
         show = self._overlay_show
         lines = []
-        if show.get("profile", True) and self._cur_profile:
-            lines.append(("Profile", self._cur_profile))
-        if show.get("dpi", True) and self._cur_dpi is not None:
-            lines.append(("DPI", self._cur_dpi))
-        if show.get("rate", False) and self._cur_rate is not None:
-            lines.append(("Polling Rate", f"{self._cur_rate} Hz"))
+        if switch:
+            if self._overlay_switch and self._cur_profile:
+                lines.append(("Profile", self._cur_profile))
+        elif self._overlay_enabled:
+            if show.get("profile", True) and self._cur_profile:
+                lines.append(("Profile", self._cur_profile))
+            if show.get("dpi", True) and self._cur_dpi is not None:
+                lines.append(("DPI", self._cur_dpi))
+            if show.get("rate", False) and self._cur_rate is not None:
+                lines.append(("Polling Rate", f"{self._cur_rate} Hz"))
         if lines:
             self.overlay.flash_lines(lines)
 
@@ -630,7 +780,7 @@ class MainWindow(QMainWindow):
         overlay -- so it confirms the profile is DONE applying, not just queued."""
         if not busy and self._overlay_pending:
             self._overlay_pending = False
-            self._overlay_flash()
+            self._overlay_flash(switch=True)
 
     def _apply_overlay_appearance(self):
         """Push the saved overlay appearance settings to BOTH overlays (the
@@ -655,10 +805,24 @@ class MainWindow(QMainWindow):
         self.profile_combo.blockSignals(False)
 
     def _on_auto_switched(self, pid):
+        """A rule matched: make the UI follow the profile now on the mouse.
+
+        Auto-switch no longer reverts when focus leaves the app, so this only
+        runs for real matches. The manual base is NOT changed -- it is what
+        turning auto-switch off returns to -- this only moves the rail combo
+        and the Profiles tab, which previously kept showing the base and made
+        auto-switch look like it had done nothing.
+
+        The on-screen overlay announces the switch (see _apply_by_id); there
+        is deliberately no Windows tray toast for it any more.
+        """
         prof = self.profiles.get(pid)
-        if prof is not None and hasattr(self, "tray") and self.tray is not None:
-            self.tray.showMessage("Profile switched", prof["name"],
-                                  QSystemTrayIcon.Information, 1500)
+        if prof is None:
+            return
+        _log.info("auto-switch: UI now on %r", prof["name"])
+        self._sync_combo(pid)
+        if hasattr(self, "profiles_panel"):
+            self.profiles_panel.show_active(pid)
 
     def apply_profile(self, config, force=False, pid=None, reseed=True):
         """Load a config into every panel and write the complete wired profile.
@@ -678,12 +842,14 @@ class MainWindow(QMainWindow):
 
         target = pid or self._applied_id or self.profiles.active_id
         if target is None or self._loading_profile:
-            return
+            return False
         previous = self._pushed_config if self._pushed_pid == target else None
         if force or previous is None or previous != config:
             self._pushed_pid = target
             self._pushed_config = copy.deepcopy(config)
             self.ctrl.call("apply_config", copy.deepcopy(config), target)
+            return True
+        return False
 
     def _seed_panels(self, config):
         """Set every panel from a config dict WITHOUT emitting apply signals."""
@@ -814,8 +980,11 @@ class MainWindow(QMainWindow):
         self._persist_and_push()
 
     def _profile_new(self):
-        name, ok = QInputDialog.getText(self, "New profile", "Profile name:",
-                                        text="New Profile")
+        # Prefill the positional number (Profile 2, Profile 3, ...) so pressing
+        # Enter keeps counting even when existing profiles have custom names.
+        name, ok = QInputDialog.getText(
+            self, "New profile", "Profile name:",
+            text=self.profiles.next_default_name())
         if not ok or not name.strip():
             return
         # a new profile starts from FACTORY DEFAULTS (not a copy of the current
@@ -918,72 +1087,144 @@ class MainWindow(QMainWindow):
             self._apply_by_id(target)
 
     def _profile_import(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Import profile", "",
-            "Official driver profile (*.pbin *.bin);;"
-            "SM809 profiles (*.pbin *.bin *.psf);;"
-            "Wireless Pro .psf profile (*.psf);;All files (*)")
-        if not path:
-            return
-        if path.lower().endswith(".psf"):
-            self._profile_import_psf(path)
-        else:
-            self._profile_import_pbin(path)
+        """Pick one or more files for the shared batch importer."""
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Import files", "",
+            f"{ALL_SUPPORTED_FILTER};;{PROFILE_FILTER};;{MACRO_FILTER};;"
+            "All files (*)")
+        if paths:
+            self.import_files(paths)
 
-    def _profile_import_pbin(self, path=None):
-        if not path:
-            path, _ = QFileDialog.getOpenFileName(
-                self, "Import wired profile", "",
-                "Official driver profile (*.pbin *.bin);;All files (*)")
-        if not path:
-            return
-        try:
-            p = self.profiles.import_pbin(path)
-        except Exception as exc:
-            QMessageBox.warning(self, "Import failed",
-                                f"Could not import this profile:\n{exc}")
-            return
-        self._refresh_profile_combo()
-        self._select_profile(p["id"])
-        # The record embeds its macros and recoil patterns; adopt them so they
-        # are editable here.
-        self._adopt_device_macros()
-        self._adopt_device_guns()
-        self.macro_panel._refresh_list()
-        self.gun_panel._refresh_list()
-        QMessageBox.information(
-            self, "Profile imported",
-            f"Imported “{p['name']}” from the official driver format. Its "
-            "buttons, DPI stages, colours, polling rate, lighting, pointer "
-            "settings, embedded macros and gun patterns are now editable.")
+    def _files_dropped(self, paths):
+        """A supported drop landed somewhere on the window."""
+        self.import_files(paths)
 
-    def _profile_import_psf(self, path):
-        """Import an official vendor .psf profile (read-only migration)."""
-        try:
-            p, warnings = self.profiles.import_psf(path, self.store)
-        except Exception as exc:
-            QMessageBox.warning(
-                self, "Import failed",
-                f"Could not import this .psf profile:\n{exc}\n\n"
-                "The importer expects the official UTF-16LE .psf export.")
+    def import_files(self, paths, notify=True):
+        """Import a mixed batch of profiles and macros with per-file isolation.
+
+        This is the single path used by the Import dialog, drag-and-drop and
+        tests.  One unreadable file never cancels the rest of the batch; the
+        profile limit is checked per file; and the batch is applied to the
+        mouse once (the last imported profile), not once per file.
+
+        Returns ``{"profiles", "macros", "errors", "ignored", "warnings",
+        "skipped"}``.  ``errors`` holds ``(file name, message)`` pairs.
+        """
+        profile_paths, macro_paths, ignored = split_paths(paths)
+
+        imported_profiles = []
+        warnings = []
+        errors = []
+        skipped = 0
+        for path in profile_paths:
+            if self.profiles.at_limit():
+                skipped += 1
+                continue
+            try:
+                if path.casefold().endswith(".psf"):
+                    prof, notes = self.profiles.import_psf(path, self.store)
+                    imported_profiles.append(prof)
+                    warnings.extend(
+                        f"{os.path.basename(path)}: {note}" for note in notes)
+                else:
+                    imported_profiles.append(self.profiles.import_pbin(path))
+            except Exception as exc:
+                errors.append((os.path.basename(path), str(exc)))
+
+        imported_macros = []
+        if macro_paths:
+            imported_macros, macro_errors = self.macro_panel.import_macro_files(
+                macro_paths, report=False)
+            errors.extend(macro_errors)
+
+        if imported_profiles:
+            # The records embed macros and recoil patterns; adopt them so they
+            # are editable, then select/apply the last imported profile once.
+            self._adopt_device_macros()
+            self._adopt_device_guns()
+            self._refresh_profile_combo()
+            self.macro_panel._refresh_list()
+            self.gun_panel._refresh_list()
+            last = imported_profiles[-1]
+            self._select_profile(last["id"])
+            self.profiles_panel.show_active(last["id"])
+
+        if imported_profiles or imported_macros or skipped or errors:
+            _log.info(
+                "Import batch: %d profile(s), %d macro(s), %d skipped, "
+                "%d unsupported, %d failed",
+                len(imported_profiles), len(imported_macros), skipped,
+                len(ignored), len(errors))
+
+        if notify:
+            self._show_import_summary(imported_profiles, imported_macros,
+                                      errors, ignored, skipped, warnings)
+        return {
+            "profiles": imported_profiles,
+            "macros": imported_macros,
+            "errors": errors,
+            "ignored": ignored,
+            "warnings": warnings,
+            "skipped": skipped,
+        }
+
+    def _show_import_summary(self, profiles, macros, errors, ignored, skipped,
+                             warnings):
+        """One dialog for the whole batch; long detail goes to the detail pane."""
+        if not (profiles or macros or errors or skipped):
+            names = file_names(ignored, 8)
+            extra = ("\n\nIgnored:\n" + "\n".join(f"• {n}" for n in names)
+                     if names else "")
+            QMessageBox.information(
+                self, "Nothing imported",
+                "No importable files were selected.\n\n"
+                f"The studio reads {supported_hint()}.{extra}")
             return
-        self._refresh_profile_combo()
-        self._select_profile(p["id"])
-        # The importer adopted the embedded macros under their dev ids; show
-        # them in the Macro tab straight away.
-        self._adopt_device_guns()
-        self.macro_panel._refresh_list()
-        self.gun_panel._refresh_list()
-        msg = (f"Imported “{p['name']}” from the official .psf profile and "
-               "applied it to the mouse.\n\n"
-               "Buttons, DPI stages, polling rate, lighting and macro events "
-               "were translated to the wired SM809.")
+
+        lines = []
+        if profiles:
+            if len(profiles) == 1:
+                lines.append(f"Imported and applied “{profiles[0]['name']}”.")
+            else:
+                lines.append(
+                    f"Imported {len(profiles)} profiles and applied "
+                    f"“{profiles[-1]['name']}” (the last one).")
+        if macros:
+            lines.append(f"Imported {len(macros)} macro"
+                         f"{'' if len(macros) == 1 else 's'} into the library.")
+        if skipped:
+            lines.append(f"Skipped {skipped} profile"
+                         f"{'' if skipped == 1 else 's'}: the mouse stores at "
+                         f"most {PROFILE_LIMIT}.")
+        if ignored:
+            lines.append(f"Ignored {len(ignored)} unsupported file"
+                         f"{'' if len(ignored) == 1 else 's'}.")
+        if errors:
+            lines.append(f"{len(errors)} file{'' if len(errors) == 1 else 's'} "
+                         "could not be imported.")
+
+        details = []
+        if ignored:
+            details.append("Ignored (unsupported):\n" + "\n".join(
+                f"• {name}" for name in file_names(ignored)))
+        if errors:
+            details.append("Could not import:\n" + "\n".join(
+                f"• {name}: {why}" for name, why in errors))
         if warnings:
-            shown = warnings[:8]
-            msg += "\n\nMigration notes:\n" + "\n".join(f"• {w}" for w in shown)
-            if len(warnings) > len(shown):
-                msg += f"\n• …and {len(warnings) - len(shown)} more."
-        QMessageBox.information(self, "Profile imported", msg)
+            details.append("Migration notes:\n" + "\n".join(
+                f"• {note}" for note in warnings))
+
+        box = QMessageBox(self)
+        box.setWindowTitle("Import finished" if not errors
+                           else "Import finished with warnings")
+        box.setIcon(QMessageBox.Warning if errors else QMessageBox.Information)
+        box.setText("\n".join(lines) or "Nothing was imported.")
+        if errors:
+            box.setInformativeText(
+                "The other files in the batch were still imported.")
+        if details:
+            box.setDetailedText("\n\n".join(details))
+        box.exec()
 
     def _profile_export_pbin(self):
         pid = self._target_profile_id()
@@ -1019,9 +1260,6 @@ class MainWindow(QMainWindow):
         if (not self.manual_apply and info.get("configurable", True)
                 and self._current_config is not None):
             self.apply_profile(self._current_config, force=True, reseed=False)
-        # The per-device wheel flag lives in Windows, not in the profile; read
-        # it after the connect burst so the card shows the current state.
-        QTimer.singleShot(0, self.performance_panel.refresh_wheel_fix)
 
     def _on_error(self, msg):
         self.topbar.set_error(msg)
@@ -1070,15 +1308,32 @@ class MainWindow(QMainWindow):
         # keep the Performance panel's selector in sync with the live rate
         self.performance_panel.set_state(polling_hz=hz)
         self._cur_rate = hz
-        if (self._overlay_show.get("rate", False)
+        if (self._overlay_enabled and self._overlay_show.get("rate", False)
                 and self._prev_rate is not None and hz != self._prev_rate):
             self._overlay_flash()
         self._prev_rate = hz
 
     def _on_command_done(self, method, ok):
+        if method != "apply_config" or ok:
+            return
+        # The mouse did not take this config. Forget the dedupe snapshot so an
+        # identical retry (the next rule match, or a manual Apply) is written
+        # again instead of being skipped as "already pushed".
+        failed_pid = self._pushed_pid
+        self._pushed_pid = None
+        self._pushed_config = None
+        # Never leave a "Switching to ..." card up when the write failed: settle
+        # it with a truthful notice and let the next attempt announce itself.
+        if self._overlay_pending:
+            self._overlay_pending = False
+            self._prev_overlay_pid = None
+            prof = self.profiles.get(failed_pid) if failed_pid else None
+            name = prof["name"] if prof is not None else self._cur_profile
+            if self._overlay_switch and name:
+                self.overlay.flash_lines([("Not applied", name)], hold_ms=4000)
         # A failed manual apply keeps the staged state marked as pending so the
         # user can fix the problem and press Apply again.
-        if method == "apply_config" and not ok and self.manual_apply:
+        if self.manual_apply:
             self._mark_pending()
 
     # -- actions --------------------------------------------------------------
@@ -1365,6 +1620,12 @@ class MainWindow(QMainWindow):
             return
         self._auto.set_enabled(on)
         self.profiles.set_setting("auto_switch", bool(on))
+        rules = sum(len(p.get("match_rules", []))
+                    for p in self.profiles.match_targets())
+        # The diagnostics log is the only record after a gaming session; say
+        # how many rules exist so "it never switched" is explainable.
+        _log.info("auto-switch %s (%d custom-app rule(s))",
+                  "enabled" if on else "disabled", rules)
         self._sync_autoswitch_ui(on)
 
     def _sync_autoswitch_ui(self, on):
@@ -1501,6 +1762,22 @@ class MainWindow(QMainWindow):
         enable.setChecked(self._overlay_enabled)
         ol.addWidget(enable)
 
+        # The switch notice replaces the old Windows tray toast. It has its own
+        # switch because it is useful even when the ambient overlay is off.
+        notify = QCheckBox("Announce profile switches on the overlay")
+        notify.setChecked(self._overlay_switch)
+        notify.setToolTip(
+            "Shows the profile that was applied over the game. This replaces "
+            "the tray notification and also works when the overlay above is "
+            "unchecked.")
+        ol.addWidget(notify)
+        notify_hint = QLabel(
+            "Replaces the Windows tray notification. The card uses the "
+            "position, size and duration below.")
+        notify_hint.setProperty("cardHint", "true")
+        notify_hint.setWordWrap(True)
+        ol.addWidget(notify_hint)
+
         cap = QLabel("SHOW ON CHANGE")
         cap.setProperty("groupLabel", "true")
         ol.addWidget(cap)
@@ -1581,6 +1858,22 @@ class MainWindow(QMainWindow):
         prev.clicked.connect(_preview)
         ol.addWidget(prev)
         lay.addWidget(overlay_grp)
+
+        # -- developer previews --
+        dev_grp = QGroupBox("Developer")
+        dl = QVBoxLayout(dev_grp)
+        dev_cb = QCheckBox("Enable developer features (work in progress)")
+        dev_cb.setChecked(self.developer)
+        dl.addWidget(dev_cb)
+        dev_hint = QLabel(
+            "Recoil Control is still being developed and is hidden by default. "
+            "Turn this on to show its tab and offer recoil patterns when "
+            "assigning a mouse button. Host playback in that tab is a preview: "
+            "the wired mouse itself never runs recoil tables.")
+        dev_hint.setProperty("cardHint", "true")
+        dev_hint.setWordWrap(True)
+        dl.addWidget(dev_hint)
+        lay.addWidget(dev_grp)
         lay.addStretch(1)
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -1594,11 +1887,13 @@ class MainWindow(QMainWindow):
                                   "dpi": cb_dpi.isChecked(), "rate": cb_rate.isChecked()}
             self._dpi_osd = cb_dpi.isChecked()
             self._sync_dpi_osd_ui(self._dpi_osd)
+            self._overlay_switch = notify.isChecked()
             # one sidecar write for the whole dialog, not one per control
             self.profiles.set_settings({
                 "manual_apply": manual,
                 "show_log": show_live_log,
                 "dpi_osd": self._dpi_osd,
+                "overlay_switch": notify.isChecked(),
                 "overlay_show": self._overlay_show,
                 "overlay_pos": pos.currentData(),
                 "overlay_opacity": op.value(),
@@ -1606,9 +1901,11 @@ class MainWindow(QMainWindow):
                 "overlay_hold": dur.value() * 100,
                 "overlay_follow_cursor": follow.isChecked(),
                 "overlay_monitor": mon.currentData() or 0,
+                "developer_features": dev_cb.isChecked(),
             })
             self.set_manual_apply(manual, persist=False)
             self._set_log_visible(show_live_log, persist=False)
+            self._set_developer(dev_cb.isChecked(), persist=False)
             self._apply_overlay_appearance()      # applies to overlay + alert overlay
             if enable.isChecked() != self._overlay_enabled:
                 self._toggle_overlay(enable.isChecked())
@@ -1635,26 +1932,39 @@ class MainWindow(QMainWindow):
             pass
 
     def closeEvent(self, e):
-        # never lose a pending debounced edit, even when closing to the tray
-        self._flush_profile_save()
-        self._save_window_geometry()
         # with a tray icon, closing hides to tray (keeps auto-switch running)
         if self.tray is not None and not getattr(self, "_force_quit", False):
+            # never lose a pending debounced edit, even when closing to the tray
+            self._flush_profile_save()
+            self._save_window_geometry()
+            # The Manage Apps popup belongs to the studio window; do not leave
+            # it floating on the desktop while the studio sits in the tray.
+            if getattr(self, "manage_apps_dialog", None) is not None:
+                self.manage_apps_dialog.hide()
             e.ignore()
             self.hide()
             self.tray.showMessage(
                 "Still running", "Auto-switch stays active. Quit from the tray icon.",
                 QSystemTrayIcon.Information, 2000)
             return
+        # Real quit: stop auto-switch and the device worker before flushing.
+        # A queued apply rewrites the same profile buffers this flush
+        # serialises, so letting the two threads overlap can persist a
+        # half-applied record.
         if self._auto is not None:
-            self._auto.set_enabled(False)
+            # stop() (not set_enabled(False)): quitting must leave the profile
+            # currently on the mouse in place instead of restoring the manual
+            # one as the device worker shuts down.
+            self._auto.stop()
+        self.ctrl.shutdown()
+        self._flush_profile_save()
+        self._save_window_geometry()
         if self.tray is not None:
             self.tray.hide()
         if getattr(self, "overlay", None) is not None:
             self.overlay.hide()
         if getattr(self, "alert_overlay", None) is not None:
             self.alert_overlay.hide()
-        self.ctrl.shutdown()
         super().closeEvent(e)
         if getattr(self, "_force_quit", False):
             from PySide6.QtWidgets import QApplication

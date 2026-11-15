@@ -21,9 +21,9 @@ import uuid
 
 
 def default_path():
-    # Portable: <config dir>/macros.json -- the project config folder from
-    # source, next to the .exe when frozen, or inside SM809_DATA_DIR when that
-    # override is set (see app.paths.config_dir).
+    # Portable: <data dir>/config/macros.json -- inside the same folder that
+    # holds the device tables, so deleting data/ resets the library too (see
+    # app.paths.config_dir).
     from .paths import config_dir
     return os.path.join(config_dir(), "macros.json")
 
@@ -107,7 +107,9 @@ class MacroStore:
         return -1
 
     # -- mutations (each persists) -------------------------------------------
-    def add(self, name=None, events=None, loop=1, folder="", protected=False):
+    def add(self, name=None, events=None, loop=1, folder="", protected=False,
+            persist=True):
+        """Append a library macro; ``persist=False`` batches the library write."""
         m = {
             "id": uuid.uuid4().hex[:8],
             "name": name or "New Macro",
@@ -117,7 +119,10 @@ class MacroStore:
             "protected": bool(protected),
         }
         self._macros.append(m)
-        self.save()
+        if persist:
+            self.save()
+        else:
+            self._dirty = True
         return m
 
     def add_with_id(self, mid, name=None, events=None, persist=True):

@@ -1,9 +1,9 @@
 {
-  "active": "fe244a9d",
+  "active": "77d3569f",
   "profiles": [
     {
-      "id": "fe244a9d",
-      "name": "Profile",
+      "id": "77d3569f",
+      "name": "Profile 1",
       "match_rules": [],
       "created": 0,
       "config": {
@@ -386,7 +386,7 @@
           "selected": 1
         },
         "polling_hz": 1000,
-        "lod_mm": 8,
+        "lod_mm": 16,
         "key_response": 4,
         "mode": 0,
         "lighting": {
@@ -448,16 +448,15 @@
           "scroll": 3,
           "double": 5,
           "enhance": false,
-          "onepage": false,
-          "wheel_reverse": false
+          "onepage": false
         }
       }
     }
   ],
   "settings": {
-    "auto_switch": true,
-    "window_geometry": "AdnQywADAAAAAAGxAAAAPQAABlgAAAPHAAABsQAAAFwAAAZYAAADxwAAAAAAAAAAB4AAAAGxAAAAXAAABlgAAAPH",
-    "overlay": false,
+    "auto_switch": false,
+    "window_geometry": "AdnQywADAAAAAAHMAAAAkQAABbMAAANXAAABzAAAALAAAAWzAAADVwAAAAAAAAAAB4AAAAHMAAAAsAAABbMAAANX",
+    "overlay": true,
     "manual_apply": true,
     "show_log": false,
     "dpi_osd": true,
@@ -467,10 +466,12 @@
       "rate": false
     },
     "overlay_pos": "bottom-right",
-    "overlay_opacity": 92,
+    "overlay_opacity": 88,
     "overlay_scale": 100,
     "overlay_hold": 1400,
     "overlay_follow_cursor": true,
-    "overlay_monitor": 0
+    "overlay_monitor": 0,
+    "recoil_host_enabled": true,
+    "developer_features": true
   }
 }

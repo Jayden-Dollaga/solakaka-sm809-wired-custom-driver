@@ -457,12 +457,91 @@ def test_demo_mode_never_sleeps():
 
 
 def test_data_dir_override_isolates_config(tmp_path, monkeypatch):
-    """A scratch SM809_DATA_DIR must not write into the real profile library."""
+    """A scratch SM809_DATA_DIR keeps every host file in the scratch folder."""
     from app import paths
 
     monkeypatch.setenv("SM809_DATA_DIR", str(tmp_path / "elsewhere"))
-    expected = os.path.join(os.path.abspath(str(tmp_path / "elsewhere")), "config")
-    assert paths.config_dir() == expected
+    base = os.path.abspath(str(tmp_path / "elsewhere"))
+    assert paths.data_dir() == base
+    assert paths.config_dir() == os.path.join(base, "config")
 
     monkeypatch.delenv("SM809_DATA_DIR")
-    assert paths.config_dir() == os.path.join(paths.app_dir(), "config")
+    assert paths.data_dir() == os.path.join(paths.app_dir(), "data")
+    assert paths.config_dir() == os.path.join(paths.app_dir(), "data", "config")
+
+
+def test_every_host_library_file_lives_in_the_data_folder(tmp_path, monkeypatch):
+    """Deleting data/ must remove profiles, macros, guns and app settings."""
+    from app import paths
+    from app.gun_store import default_path as guns_path
+    from app.macro_store import default_path as macros_path
+    from app.profile_store import default_path as profiles_path
+
+    monkeypatch.setenv("SM809_DATA_DIR", str(tmp_path / "portable"))
+    data = paths.data_dir()
+    assert os.path.isdir(data) is False          # the sandbox starts empty
+    for path in (profiles_path(), macros_path(), guns_path()):
+        assert os.path.commonpath([data, os.path.abspath(path)]) == data
+
+
+def test_legacy_config_is_copied_into_the_data_folder_once(tmp_path):
+    """An upgrade imports the old <app>/config library exactly once."""
+    from app import paths
+
+    legacy = tmp_path / "app" / "config"
+    legacy.mkdir(parents=True)
+    (legacy / "profiles.json").write_text('{"settings": {}}', encoding="utf-8")
+    target = tmp_path / "data" / "config"
+    marker = tmp_path / "data" / ".factory-reset"
+
+    got = paths._migrate_legacy_config(legacy, target, True, marker)
+    assert got == target
+    assert (target / "profiles.json").read_text(encoding="utf-8") == \
+        '{"settings": {}}'
+
+    # The live library wins from then on; the old copy never overwrites it.
+    (target / "profiles.json").write_text('{"settings": {"changed": 1}}',
+                                          encoding="utf-8")
+    assert paths._migrate_legacy_config(legacy, target, True, marker) is None
+    assert '"changed"' in (target / "profiles.json").read_text(encoding="utf-8")
+
+    # Deleting only the library afterwards is a reset too: no re-import.
+    shutil.rmtree(target)
+    assert paths._migrate_legacy_config(legacy, target, True, marker) is None
+    assert not target.exists()
+
+
+def test_deleted_data_folder_is_a_reset_not_a_migration(tmp_path):
+    """A missing data/ means factory reset, even if an old library lingers."""
+    from app import paths
+
+    legacy = tmp_path / "app" / "config"
+    legacy.mkdir(parents=True)
+    (legacy / "profiles.json").write_text('{"settings": {"old": 1}}',
+                                          encoding="utf-8")
+    target = tmp_path / "data" / "config"
+    marker = tmp_path / "data" / ".factory-reset"
+
+    assert paths._migrate_legacy_config(legacy, target, False, marker) is None
+    assert marker.is_file()
+    assert not target.exists()
+
+    # Even a crash before the first settings write must not revive it.
+    assert paths._migrate_legacy_config(legacy, target, True, marker) is None
+    assert not target.exists()
+
+
+def test_env_override_never_imports_the_real_library(tmp_path, monkeypatch):
+    """Sandboxes and second portable copies start clean, not from the app dir."""
+    from app import paths
+
+    legacy = tmp_path / "app" / "config"
+    legacy.mkdir(parents=True)
+    (legacy / "profiles.json").write_text("{}", encoding="utf-8")
+    sandbox = tmp_path / "sandbox"
+
+    monkeypatch.setattr(paths, "app_dir", lambda: str(tmp_path / "app"))
+    monkeypatch.setattr(paths, "_DATA_EXISTED_AT_START", True)
+    monkeypatch.setenv("SM809_DATA_DIR", str(sandbox))
+    assert paths.migrate_legacy_config() is None
+    assert not (sandbox / "config").exists()

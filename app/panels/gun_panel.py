@@ -3,9 +3,11 @@ app.panels.gun_panel -- the recoil-pattern (Gun) library editor.
 
 The wired firmware calls these tables "guns": a bullet pattern of X/Y cursor
 offsets and delays.  The official driver's Gun page was hidden in the shipped
-build, but the action (``Set Gun``, 0x79), the button-entry layout and the
-128-byte encoder all exist.  This panel exposes the same 30-row table with a
-host-side named library, and the Buttons tab binds a pattern with ``Set Gun``.
+build, and its apply routine copies only macro tables into the upload buffer,
+so the ``Set Gun`` (0x79) action is inert on the wired mouse.  The studio still
+stores the table in the profile for parity, and plays it from the PC through
+:mod:`app.recoil_player` (host playback), which is the path that actually moves
+the cursor.
 
 We deliberately keep the editor row-based (not a live recorder): a recoil
 pattern is a handful of exact offsets, and the firmware table has a hard
@@ -20,13 +22,16 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget, QPushButton,
     QLineEdit, QSpinBox, QFrame, QScrollArea, QSizePolicy,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QInputDialog, QMenu, QToolButton,
+    QInputDialog, QMenu, QToolButton, QCheckBox, QComboBox,
 )
 
 from .. import theme
 from ..widgets.controls import Card, ResponsiveRow
 from ..gun_store import (
     DELAY_MAX, DELAY_STEP, MAX_ROWS, X_MAX, X_MIN, Y_MAX, Y_MIN,
+)
+from ..recoil_player import (
+    DEFAULT_TRIGGER, HOST_PLAYBACK_AVAILABLE, TRIGGERS, RecoilPlayer,
 )
 from ..recoil_recorder import RecoilRecorder
 from wired.protocol import gun_encoded_size, gun_fits
@@ -52,11 +57,19 @@ class GunPanel(QWidget):
     library_changed = Signal()
     ARM_MS = 3000
 
-    def __init__(self, store):
+    def __init__(self, store, get_setting=None, set_setting=None):
         super().__init__()
         self.store = store
+        self._get_setting = get_setting or (lambda _key, default=None: default)
+        self._set_setting = set_setting or (lambda _key, _value: None)
         self._cur_id = None
         self._suspend = False
+        # The shell turns this off while Recoil Control is a hidden developer
+        # preview; a standalone panel (tests) starts usable.
+        self._developer = True
+
+        self.player = RecoilPlayer(self)
+        self.player.active_changed.connect(self._on_playback_active)
 
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
@@ -78,13 +91,14 @@ class GunPanel(QWidget):
         root.setContentsMargins(28, 24, 28, 24)
         root.setSpacing(16)
 
-        title = QLabel("Gun Patterns")
+        title = QLabel("Recoil Pattern")
         title.setProperty("panelTitle", "true")
         root.addWidget(title)
-        sub = QLabel("A recoil pattern is the down/right pull the mouse adds "
-                     "while you fire. Build one here, bind it to a side button "
-                     "in the Buttons tab, then apply. It travels inside the "
-                     "profile, so it survives a .pbin export/import.")
+        sub = QLabel("Developer preview. A recoil pattern is the down/right "
+                     "pull the mouse adds while you fire. Build one here, then "
+                     "play it from this PC with host playback — wired firmware "
+                     "never runs recoil tables. Patterns still save inside the "
+                     "profile, so they survive a .pbin export/import.")
         sub.setProperty("panelSubtitle", "true")
         sub.setWordWrap(True)
         root.addWidget(sub)
@@ -96,6 +110,7 @@ class GunPanel(QWidget):
         body.addWidget(self._build_left())
         body.addWidget(self._build_editor(), 1)
 
+        self._restore_playback_settings()
         self._refresh_list()
         self._load_editor()
 
@@ -118,7 +133,7 @@ class GunPanel(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(10)
 
-        cap = QLabel("GUN LIBRARY")
+        cap = QLabel("RECOIL LIBRARY")
         cap.setProperty("groupLabel", "true")
         lay.addWidget(cap)
 
@@ -157,8 +172,10 @@ class GunPanel(QWidget):
         self.status.setWordWrap(True)
         lay.addWidget(self.status)
 
-        hint = QLabel("Saved automatically. Bind a pattern in the Buttons tab "
-                      "with the Gun category, then press Apply.")
+        hint = QLabel("Saved automatically. Play the selected pattern with "
+                      "host playback above. Binding it in the Buttons tab "
+                      "stores it in the profile, but the wired mouse will not "
+                      "run it.")
         hint.setProperty("cardHint", "true")
         hint.setWordWrap(True)
         lay.addWidget(hint)
@@ -184,19 +201,24 @@ class GunPanel(QWidget):
 
         how = Card(
             "HOW TO USE",
-            "The Gun tab only edits the pattern. The button that runs it is "
-            "assigned in the Buttons tab (Gun category).")
+            "The wired mouse cannot play recoil tables: the vendor build hid "
+            "its Gun page and never uploaded them. Host playback runs the "
+            "selected pattern from this PC instead; the Buttons tab only "
+            "stores it in the profile.")
         steps = QLabel(
             "1.  Create a pattern here and tune X / Y / Delay (start with a "
-            "few rows and small positive offsets).\n"
-            "2.  Open Buttons, click the mouse button you want to use, choose "
-            "Gun, select this pattern and a repeat count (1-3), then click OK.\n"
-            "3.  Click Apply. The pattern is embedded in that button and "
-            "uploaded with the profile.\n"
-            "4.  In the game, hold (or tap) that button while firing; the "
-            "mouse replays the rows.\n"
-            "5.  Tune the rows until the crosshair stays on target. Flip X / "
-            "Flip Y reverse a whole column while you experiment.")
+            "few rows and small offsets).\n"
+            "2.  Tick Enable host playback and choose the button you press "
+            "while firing. It must still reach Windows as a normal mouse "
+            "button; if the mouse is bound to Recoil Control on that button, "
+            "the mouse sends no press.\n"
+            "3.  Start the game and keep the studio running. Hold the trigger: "
+            "the pattern plays once from row 1 and stops at the end or when "
+            "you release it.\n"
+            "4.  Tune the rows until the crosshair stays on target. Flip X / "
+            "Flip Y reverse a whole column.\n"
+            "5.  The Buttons tab can still bind a pattern to keep it in the "
+            "profile, but the wired mouse will not execute it.")
         steps.setWordWrap(True)
         steps.setProperty("cardHint", "true")
         # The five steps used to push the pattern table below the fold at the
@@ -212,13 +234,47 @@ class GunPanel(QWidget):
         how.add(steps)
         lay.addWidget(how)
 
+        play = Card(
+            "PLAY ON THIS PC",
+            "Host playback injects the selected pattern's relative movement "
+            "while the trigger is held. Keep this studio running (elevated "
+            "too if the game is); games that read raw mouse input may ignore "
+            "injected movement.")
+        self.host_enable = QCheckBox("Enable host playback")
+        self.host_enable.setToolTip(
+            "Play the selected pattern from Windows instead of the mouse")
+        self.host_enable.toggled.connect(self._on_host_toggled)
+
+        trigger_box = QWidget()
+        trigger_lay = QHBoxLayout(trigger_box)
+        trigger_lay.setContentsMargins(0, 0, 0, 0)
+        trigger_lay.setSpacing(8)
+        trigger_lay.addWidget(QLabel("Trigger"))
+        self.host_trigger = QComboBox()
+        for label, vk in TRIGGERS:
+            self.host_trigger.addItem(label, vk)
+        self.host_trigger.setToolTip(
+            "Mouse button held to play the pattern. It must be a normal "
+            "button that Windows receives — side buttons bound to another "
+            "function may not report a press.")
+        self.host_trigger.currentIndexChanged.connect(self._on_host_trigger)
+        trigger_lay.addWidget(self.host_trigger)
+        trigger_box.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
+        # Stack the two clusters on a narrow card so the editor never needs
+        # horizontal scrolling at the 820 px window minimum.
+        play.add(ResponsiveRow(self.host_enable, trigger_box, gap=12))
+        self.host_status = QLabel("")
+        self.host_status.setProperty("cardHint", "true")
+        self.host_status.setWordWrap(True)
+        play.add(self.host_status)
+        lay.addWidget(play)
+
         pattern = Card(
             "RECOIL PATTERN",
-            "Each row pulls the crosshair by X / Y units, then waits Delay "
-            "before the next row. The firmware transmits the magnitude of both "
-            "offsets, so keep them positive (0-127) for a normal right/down "
-            "pull; the Sign note below warns when a row cannot be sent as "
-            "typed. Record your own compensation by firing while armed.")
+            "Each row pulls the crosshair by X / Y pixels, then waits Delay "
+            "before the next row. Host playback honors the sign; the uploaded "
+            "firmware table (which the wired mouse never runs) stores only the "
+            "magnitude. Record your own compensation by firing while armed.")
         # The header keeps its airy two-row shape: the count/budget pair and
         # the edit tools share a line, then the recorder gets its own.  Each
         # line is a ResponsiveRow so the narrow card stacks its two clusters
@@ -330,14 +386,13 @@ class GunPanel(QWidget):
         lay.addWidget(pattern, 1)
 
         hint = QLabel(
-            "The bound button replays this pattern on the mouse. The 128-byte "
-            "table entry holds an 8-byte row per real offset and a 4-byte row "
-            "per zero offset. At most 3 gun/left-macro buttons are allowed per "
-            "mode, and gun tables share the firmware's eleven macro/gun table "
-            "slots — a profile packed with macros can leave no room for a gun. "
-            "The Buttons tab shows that budget warning. The shipped driver "
-            "never uploaded gun tables, so this path is experimental — verify "
-            "a small pattern on the hardware before relying on it.")
+            "Wired firmware never plays recoil tables: the vendor build hid "
+            "its Gun page and its apply routine copies only macro tables, so a "
+            "Recoil Control binding is stored but does nothing on the mouse. "
+            "Use PLAY ON THIS PC to run the pattern. The stored table still "
+            "shares the firmware's eleven macro / recoil slots and the "
+            "three-button per-mode limit, so a profile packed with macros can "
+            "leave no room for it; the Buttons tab shows that budget warning.")
         hint.setProperty("cardHint", "true")
         hint.setWordWrap(True)
         lay.addWidget(hint)
@@ -375,7 +430,7 @@ class GunPanel(QWidget):
     def new_gun(self):
         if self._recording:
             self._finish_recording("pattern changed")
-        name = self.store.unique_name(f"Gun {len(self.store.all()) + 1}")
+        name = self.store.unique_name(f"Recoil {len(self.store.all()) + 1}")
         g = self.store.add(name)
         self._refresh_list()
         self.gun_list.setCurrentRow(self.store.index_of(g["id"]))
@@ -424,7 +479,7 @@ class GunPanel(QWidget):
         if g is None:
             return
         name, ok = QInputDialog.getText(
-            self, "Rename gun pattern", "Pattern name:", text=g["name"])
+            self, "Rename recoil pattern", "Pattern name:", text=g["name"])
         if not ok:
             return
         name = self.store.unique_name(name, exclude_id=g["id"])
@@ -550,6 +605,89 @@ class GunPanel(QWidget):
         self.how_steps.setVisible(bool(expanded))
         self.how_toggle.setText("Hide the steps" if expanded
                                 else "Show the 5 steps")
+
+    # -- host playback --------------------------------------------------------
+    def _restore_playback_settings(self):
+        try:
+            trigger = int(self._get_setting("recoil_host_trigger",
+                                            DEFAULT_TRIGGER))
+        except (TypeError, ValueError):
+            trigger = DEFAULT_TRIGGER
+        self.host_trigger.blockSignals(True)
+        i = self.host_trigger.findData(trigger)
+        self.host_trigger.setCurrentIndex(
+            i if i >= 0 else self.host_trigger.findData(DEFAULT_TRIGGER))
+        self.host_trigger.blockSignals(False)
+        self.host_enable.blockSignals(True)
+        self.host_enable.setChecked(
+            bool(self._get_setting("recoil_host_enabled", False)))
+        self.host_enable.blockSignals(False)
+
+    def _on_host_toggled(self, on):
+        self._set_setting("recoil_host_enabled", bool(on))
+        self._sync_player()
+
+    def _on_host_trigger(self, _index):
+        vk = self.host_trigger.currentData()
+        if vk is not None:
+            self._set_setting("recoil_host_trigger", int(vk))
+        self._sync_player()
+
+    def set_developer(self, on):
+        """Gate the preview while the shell hides the Recoil Control page.
+
+        The saved playback preference survives; turning the preview off just
+        stops the engine and the page's controls, so nothing can play while
+        the tab is unreachable.
+        """
+        on = bool(on)
+        if on == self._developer:
+            return
+        self._developer = on
+        if on:
+            self._restore_playback_settings()
+        self._sync_player()
+
+    def _sync_player(self):
+        """Follow the selected pattern and the playback controls."""
+        g = self._cur()
+        self.player.set_trigger(self.host_trigger.currentData()
+                                or DEFAULT_TRIGGER)
+        self.player.set_rows((g or {}).get("rows") or [])
+        self.player.set_enabled(self._developer
+                                and self.host_enable.isChecked())
+        self._refresh_playback_status()
+
+    def _refresh_playback_status(self):
+        label = self.host_trigger.currentText()
+        g = self._cur()
+        if self.player.active and g is not None:
+            text = f"Playing “{g['name']}” — release {label} to stop."
+            color = theme.ACCENT
+        elif not self._developer:
+            text = ("Developer preview is off. Turn it on in Settings to use "
+                    "recoil patterns.")
+            color = theme.TEXT_DIM
+        elif not HOST_PLAYBACK_AVAILABLE:
+            text = "Host playback needs Windows."
+            color = theme.WARN
+        elif not self.host_enable.isChecked():
+            text = ("Off. The pattern is saved, but the wired mouse will not "
+                    "run it.")
+            color = theme.TEXT_DIM
+        elif g is None:
+            text = "Select a pattern to play."
+            color = theme.TEXT_DIM
+        else:
+            rows = g.get("rows") or []
+            text = (f"Listening: hold {label} to play “{g['name']}” "
+                    f"({len(rows)} rows). Keep the studio running.")
+            color = theme.TEXT_DIM
+        self.host_status.setText(text)
+        self.host_status.setStyleSheet(f"color: {color};")
+
+    def _on_playback_active(self, _active):
+        self._refresh_playback_status()
 
     def _clear_offsets(self):
         g = self._cur()
@@ -704,6 +842,7 @@ class GunPanel(QWidget):
                 "Select a pattern, or create one with + New.")
             self.pattern_note.setText("")
             self.pattern_note.setStyleSheet("")
+            self._sync_player()
             return
         rows = g.get("rows") or []
         size = gun_encoded_size(rows)
@@ -714,6 +853,7 @@ class GunPanel(QWidget):
         self.size_label.setToolTip(
             message or "This pattern fits the device's 128-byte table entry.")
         self._refresh_pattern_note(rows, ok, message)
+        self._sync_player()
 
     def _refresh_pattern_note(self, rows, fits, message):
         """Explain the two patterns that look fine but do nothing on hardware."""
@@ -725,10 +865,10 @@ class GunPanel(QWidget):
                 negative += 1
         if negative:
             notes.append(
-                f"{negative} row(s) use a negative offset. The firmware "
-                "transmits |X| and |Y| without a sign, so those rows pull the "
-                "same way as their positive values — keep X/Y >= 0 for a "
-                "predictable right/down recoil compensation.")
+                f"{negative} row(s) use a negative offset. Host playback "
+                "honors the sign and pulls left/up for those rows; the "
+                "uploaded firmware table (which the wired mouse never runs) "
+                "stores only the magnitude.")
         if rows and all((list(r) + [0, 0, 10])[0] == 0
                         and (list(r) + [0, 0, 10])[1] == 0 for r in rows):
             notes.append(

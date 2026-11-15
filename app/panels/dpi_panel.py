@@ -2,9 +2,15 @@
 app.panels.dpi_panel -- the DPI configuration panel.
 
 Six (up to eight) DPI stage rows. Each row: enable toggle, a 100..24000 slider,
-a large monospace value readout, and a color swatch (the stage LED color). The
+an editable numeric value box, and a color swatch (the stage LED color). The
 stage that is currently active on the device is highlighted live from the status
-push. Changes auto-apply to the mouse (slider drags are debounced).
+push. Changes auto-apply to the mouse (slider drags and typed values are
+debounced).
+
+The page lives inside the Performance tab, so it is normally built with
+``embedded=True``: no page header and no scroll area of its own (the
+Performance page scrolls the whole column).  The standalone form is kept for
+tests and for anything that wants the complete page.
 """
 
 from PySide6.QtCore import Qt, Signal, QTimer
@@ -15,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from .. import theme
 from ..widgets.color_picker import pick_color
+from ..widgets.controls import NumericValueBox
 from sm809pro import defaults as _D
 
 # Confirmed factory defaults (single source of truth in sm809pro.defaults).
@@ -65,6 +72,18 @@ class Swatch(QFrame):
             self.changed.emit()
 
 
+class DpiValueBox(NumericValueBox):
+    """Numeric DPI entry that looks like the old value readout.
+
+    Typing/clamping behaviour lives in `NumericValueBox`; this subclass fixes
+    the DPI range and width.  The stage row snaps a committed value to the
+    firmware's 100-DPI step and moves the slider to match.
+    """
+
+    def __init__(self, value: int):
+        super().__init__(value, DPI_MIN, DPI_MAX, width=86)
+
+
 class StageRow(QFrame):
     """One DPI stage: enable toggle + slider + value readout + color swatch.
     Clicking the index badge selects this stage as the active DPI."""
@@ -110,11 +129,13 @@ class StageRow(QFrame):
         self.slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         lay.addWidget(self.slider, 1)
 
-        # value readout (monospace)
-        self.value = QLabel(str(self._snap(dpi)))
+        # editable value box (monospace, numeric only)
+        self.value = DpiValueBox(self._snap(dpi))
         self.value.setObjectName("dpiValue")
-        self.value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.value.setFixedWidth(86)
+        self.value.setToolTip(
+            "Type a DPI value (100-24000, steps of 100) and press Enter.\n"
+            "Letters are ignored; the slider follows.")
+        self.value.committed.connect(self._on_value_typed)
         lay.addWidget(self.value)
 
         unit = QLabel("DPI")
@@ -133,7 +154,25 @@ class StageRow(QFrame):
         return int(round(v / DPI_STEP) * DPI_STEP)
 
     def _on_slider(self, v):
-        self.value.setText(str(self._snap(v)))
+        snapped = self._snap(v)
+        if self.value.value() != snapped:
+            self.value.blockSignals(True)
+            self.value.setValue(snapped)
+            self.value.blockSignals(False)
+        self.edited.emit()
+
+    def _on_value_typed(self, v):
+        """Commit a typed value: snap to the firmware's 100-DPI step and move
+        the slider to the same place, so the row has one source of truth."""
+        snapped = self._snap(v)
+        if snapped != v:
+            self.value.blockSignals(True)
+            self.value.setValue(snapped)
+            self.value.blockSignals(False)
+        if self.slider.value() != snapped:
+            self.slider.blockSignals(True)
+            self.slider.setValue(snapped)
+            self.slider.blockSignals(False)
         self.edited.emit()
 
     def _on_idx_clicked(self, e):
@@ -188,10 +227,11 @@ class DpiPanel(QWidget):
     # not on every intermediate value
     APPLY_DEBOUNCE_MS = 250
 
-    def __init__(self, dpi=None, colors=None, enabled_count=6):
+    def __init__(self, dpi=None, colors=None, enabled_count=6, embedded=False):
         super().__init__()
         dpi = dpi or DEFAULT_DPI
         colors = colors or DEFAULT_COLORS
+        self._embedded = bool(embedded)
         self._suspend_apply = False  # set while programmatically loading values
         # Absolute row index of the active stage.  The device's own stage number
         # counts only *enabled* stages, so it is converted at the panel boundary
@@ -205,23 +245,27 @@ class DpiPanel(QWidget):
         self._apply_timer.timeout.connect(self._emit_apply)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(28, 24, 28, 24)
-        root.setSpacing(18)
+        if embedded:
+            root.setContentsMargins(0, 0, 0, 0)
+            root.setSpacing(10)
+        else:
+            root.setContentsMargins(28, 24, 28, 24)
+            root.setSpacing(18)
 
-        # header
-        title = QLabel("DPI Stages")
-        title.setProperty("panelTitle", "true")
-        root.addWidget(title)
-        sub = QLabel("Configure resolution stages and their indicator colors. "
-                     "Click a stage number to make it the active DPI.")
-        sub.setProperty("panelSubtitle", "true")
-        sub.setWordWrap(True)
-        root.addWidget(sub)
-        root.addWidget(_hline())
+        if not embedded:
+            # header (only when this is a full page)
+            title = QLabel("DPI Stages")
+            title.setProperty("panelTitle", "true")
+            root.addWidget(title)
+            sub = QLabel("Configure resolution stages and their indicator colors. "
+                         "Click a stage number to make it the active DPI, or type "
+                         "a value in the number box.")
+            sub.setProperty("panelSubtitle", "true")
+            sub.setWordWrap(True)
+            root.addWidget(sub)
+            root.addWidget(_hline())
 
-        # scrollable stage list
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
+        # stage list (scrolled by this panel, or by the Performance page)
         holder = QWidget()
         col = QVBoxLayout(holder)
         col.setContentsMargins(0, 0, 0, 0)
@@ -246,8 +290,14 @@ class DpiPanel(QWidget):
             self.rows.append(row)
             col.addWidget(row)
         col.addStretch(1)
-        scroll.setWidget(holder)
-        root.addWidget(scroll, 1)
+
+        if embedded:
+            root.addWidget(holder, 1)
+        else:
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setWidget(holder)
+            root.addWidget(scroll, 1)
 
         # reflect the initial active stage (factory default is a relative index)
         self.set_active_stage(_D.DPI_SELECTED)
@@ -368,7 +418,9 @@ class DpiPanel(QWidget):
                     row.slider.blockSignals(True)
                     row.slider.setValue(dpi[i])
                     row.slider.blockSignals(False)
-                    row.value.setText(str(row._snap(dpi[i])))
+                    row.value.blockSignals(True)
+                    row.value.setValue(row._snap(dpi[i]))
+                    row.value.blockSignals(False)
                 if colors and i < len(colors):
                     row.swatch.set_rgb(colors[i])
                 if enabled_count is not None:

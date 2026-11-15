@@ -202,7 +202,7 @@ def test_shared_table_budget_is_reported_not_silent():
     assert 11 not in tables and 12 not in tables
 
     warnings = table_budget_warnings(prof)
-    assert any("13 macro/gun tables" in w for w in warnings)
+    assert any("13 macro / recoil tables" in w for w in warnings)
     assert any("last 2 will not work" in w for w in warnings)
 
     # Within the caps but still too many tables: only the shared limit fires.
@@ -281,7 +281,7 @@ def test_apply_warns_when_table_budget_is_exceeded(demo):
 
     result = svc.apply(apply_windows=False, persist=False)
     assert result.ok, result.error
-    assert any("13 macro/gun tables" in w for w in result.warnings)
+    assert any("13 macro / recoil tables" in w for w in result.warnings)
 
 
 # ---------------------------------------------------------------------------

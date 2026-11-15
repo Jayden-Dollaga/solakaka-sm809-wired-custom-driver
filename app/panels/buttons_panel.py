@@ -55,13 +55,14 @@ class ButtonRow(QFrame):
     changed = Signal(int)          # 0-based firmware slot
 
     def __init__(self, phys: int, slot: int, code, get_macros=None,
-                 get_guns=None):
+                 get_guns=None, developer=False):
         super().__init__()
         self.phys = phys
         self.slot = slot
         self._code = code
         self._get_macros = get_macros or (lambda: [])
         self._get_guns = get_guns or (lambda: [])
+        self._developer = bool(developer)
         self.setObjectName("btnRow")
 
         lay = QHBoxLayout(self)
@@ -88,10 +89,14 @@ class ButtonRow(QFrame):
     def _open_picker(self):
         result = pick_action(self._code, self.window(), phys=self.slot,
                              macros=self._get_macros(),
-                             guns=self._get_guns())
+                             guns=self._get_guns(),
+                             developer=self._developer)
         if result is not None:
             self.set_code(result)
             self.changed.emit(self.slot)
+
+    def set_developer(self, on):
+        self._developer = bool(on)
 
     def set_code(self, code):
         self._code = copy.deepcopy(code) if isinstance(code, dict) else tuple(code)
@@ -187,7 +192,8 @@ class ButtonsPanel(QWidget):
                     "applied. Wheel Up/Down and other firmware-only slots are "
                     "preserved automatically and are not shown here.")
 
-    def __init__(self, codes=None, get_macros=None, get_guns=None):
+    def __init__(self, codes=None, get_macros=None, get_guns=None,
+                 developer=False):
         super().__init__()
         base = codes or A.default_button_codes()
         self._bindings = [copy.deepcopy(c) if isinstance(c, dict) else tuple(c)
@@ -195,6 +201,7 @@ class ButtonsPanel(QWidget):
         self._layer = 0
         self._get_macros = get_macros or (lambda: [])
         self._get_guns = get_guns or (lambda: [])
+        self._developer = bool(developer)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(28, 24, 28, 24)
@@ -249,7 +256,8 @@ class ButtonsPanel(QWidget):
             row = ButtonRow(phys, A.slot_for_physical(phys, 0),
                             self._bindings[A.slot_for_physical(phys, 0)],
                             get_macros=self._get_macros,
-                            get_guns=self._get_guns)
+                            get_guns=self._get_guns,
+                            developer=self._developer)
             row.changed.connect(self._on_button_changed)
             self.rows[phys] = row
             left.addWidget(row)
@@ -265,7 +273,8 @@ class ButtonsPanel(QWidget):
                 row = ButtonRow(phys, A.slot_for_physical(phys, 0),
                                 self._bindings[A.slot_for_physical(phys, 0)],
                                 get_macros=self._get_macros,
-                                get_guns=self._get_guns)
+                                get_guns=self._get_guns,
+                                developer=self._developer)
                 row.changed.connect(self._on_button_changed)
                 self.rows[phys] = row
                 right.addWidget(row)
@@ -279,6 +288,13 @@ class ButtonsPanel(QWidget):
 
         self._load_layer()
         self._refresh_budget()
+
+    def set_developer(self, on):
+        """Show/hide the developer-preview categories in the action picker."""
+        on = bool(on)
+        self._developer = on
+        for row in self.rows.values():
+            row.set_developer(on)
 
     # -- mode -----------------------------------------------------------------
     def set_manual_apply(self, manual):

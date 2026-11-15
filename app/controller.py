@@ -77,6 +77,9 @@ class DeviceController(QObject):
         self._is_connected = False
         self._last_check = 0.0
         self._dev_lock = threading.RLock()
+        # Last failed-connect reason already surfaced in the UI.  The worker
+        # retries every 1.5 s, so the same message must not be re-emitted.
+        self._last_connect_error = ""
 
     # -- public API -----------------------------------------------------------
     @property
@@ -202,12 +205,21 @@ class DeviceController(QObject):
         if ok:
             self._is_connected = True
             self._last_check = time.time()
+            self._last_connect_error = ""
             self.connected.emit({
                 "connection": "wired",
                 "product": "SM809 (USB wired)",
                 "configurable": True,
             })
             self._emit_live()
+        else:
+            # Only a bootloader-mode mouse is worth telling the user about;
+            # an unplugged cable is the normal "searching" state.
+            message = self._dev.last_error
+            if message and message != self._last_connect_error:
+                self._last_connect_error = message
+                if self._dev.bootloader_present():
+                    self.error.emit(message)
 
     def _maintain(self):
         now = time.time()

@@ -2,7 +2,7 @@
 app.panels.app_picker -- choose a running application for a profile's
 custom-app list, the way the NVIDIA Control Panel's program list works.
 
-"Add app" on the Auto-Switch page opens this dialog, so the user picks the
+"Add app" in the Manage Apps dialog opens this dialog, so the user picks the
 program by name instead of typing exe/path/title fields. The dialog builds the
 narrowest rule that still identifies the selection (see rule_for_app): usually
 just the exe name, with the path or window title added only when another running
@@ -11,28 +11,42 @@ app shares the same exe.
 `apps` is injectable so tests can run without enumerating the real desktop.
 **Browse…** picks an .exe from disk for programs that are not running, building
 the same kind of rule from the chosen path.
+
+**Include background processes (Task Manager)** adds the process list to the
+picker. Those entries come from the same Toolhelp snapshot Task Manager reads
+and need no window, which covers launchers and anti-cheat titles whose window
+is protected; they build exe-only rules.
 """
 
 import os
 
-from PySide6.QtCore import QFileInfo, QSize, Qt
+from PySide6.QtCore import QFileInfo, QSize, Qt, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
-    QDialog, QFileDialog, QFileIconProvider, QHBoxLayout, QLabel, QLineEdit,
-    QListWidget, QListWidgetItem, QPushButton, QVBoxLayout,
+    QCheckBox, QDialog, QFileDialog, QFileIconProvider, QHBoxLayout, QLabel,
+    QLineEdit, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout,
 )
 
 from .. import theme
-from ..autoswitch import list_running_apps, rule_for_app
+from ..autoswitch import list_processes, list_running_apps, rule_for_app
+
+# Shell icon extraction is slow on a cold start (the first icon can take
+# hundreds of milliseconds), so results are cached across pickers and loaded
+# after the list is already usable.
+_ICON_CACHE = {}
 
 
 class AppPicker(QDialog):
-    def __init__(self, parent=None, apps=None):
+    def __init__(self, parent=None, apps=None, processes=None):
         super().__init__(parent)
         self.setWindowTitle("Add app")
         self.setModal(True)
         self.resize(620, 500)
-        self._apps = list(apps) if apps is not None else list_running_apps()
+        self._window_apps = list(apps) if apps is not None else list_running_apps()
+        # None = not loaded yet; the process snapshot is only taken when the
+        # checkbox asks for it (or tests inject a list).
+        self._process_apps = list(processes) if processes is not None else None
+        self._apps = []
         self._icons = QFileIconProvider()
         self._last_dir = ""          # remembered while the dialog is open
 
@@ -81,6 +95,17 @@ class AppPicker(QDialog):
         self.search.textChanged.connect(self._apply_filter)
         root.addWidget(self.search)
 
+        # Task Manager's process list, for programs with no visible window
+        # (launchers, background clients) or protected anti-cheat windows.
+        self.show_processes = QCheckBox(
+            "Include background processes (Task Manager)")
+        self.show_processes.setToolTip(
+            "Lists every running process by exe name, like Task Manager. "
+            "Useful for launchers and games without a normal window; the "
+            "studio never opens the process itself.")
+        self.show_processes.toggled.connect(self._on_show_processes)
+        root.addWidget(self.show_processes)
+
         self.list = QListWidget()
         self.list.setIconSize(QSize(22, 22))
         self.list.setSpacing(1)
@@ -116,35 +141,89 @@ class AppPicker(QDialog):
         footer.addWidget(self.ok_btn)
         root.addLayout(footer)
 
-        self._populate()
+        self._rebuild_apps()
         self.search.setFocus()
 
     # -- data -----------------------------------------------------------------
     def _icon(self, app):
         path = app.get("path")
-        if path:
-            info = QFileInfo(path)
-            if info.exists():
-                return self._icons.icon(info)
-        return QIcon()
+        if not path:
+            return QIcon()
+        key = path.lower()
+        cached = _ICON_CACHE.get(key)
+        if cached is not None:
+            return cached
+        info = QFileInfo(path)
+        icon = self._icons.icon(info) if info.exists() else QIcon()
+        _ICON_CACHE[key] = icon
+        return icon
 
     def _label(self, app):
+        if app.get("process"):
+            n = int(app.get("instances") or 1)
+            tag = f"{n} processes" if n > 1 else "background process"
+            return f"{app['exe']}   ({tag})"
         return f"{app['title']}   ({app['exe']})"
 
+    def _rebuild_apps(self):
+        """Window entries first, then unique process names enabled by the box."""
+        apps = list(self._window_apps or [])
+        if self.show_processes.isChecked():
+            if self._process_apps is None:
+                self._process_apps = list_processes()
+            seen = {(a.get("exe") or "").lower() for a in apps}
+            for proc in self._process_apps:
+                key = (proc.get("exe") or "").lower()
+                if key and key not in seen:
+                    apps.append(proc)
+                    seen.add(key)
+        self._apps = apps
+        self._populate()
+
+    def _on_show_processes(self, _on):
+        self._rebuild_apps()
+
     def _populate(self):
+        self._icon_gen = getattr(self, "_icon_gen", 0) + 1
+        gen = self._icon_gen
         self.list.clear()
         for app in self._apps:
-            it = QListWidgetItem(self._icon(app), self._label(app))
+            it = QListWidgetItem(self._label(app))
             it.setData(Qt.UserRole, app)
-            it.setToolTip(app.get("path") or app.get("exe") or "")
+            if app.get("process"):
+                it.setToolTip(
+                    f"{app['exe']} — listed in Task Manager. Matched by exe "
+                    "name; no window title or folder is recorded.")
+            else:
+                it.setToolTip(app.get("path") or app.get("exe") or "")
             self.list.addItem(it)
         if self.list.count():
             self.list.setCurrentRow(0)
         self._apply_filter(self.search.text())
+        # Icons come from the Windows shell and are slow on a cold start. Fill
+        # them in after the dialog is interactive, one per event-loop turn.
+        QTimer.singleShot(0, lambda: self._load_icons(gen))
+
+    def _load_icons(self, gen, index=0):
+        try:
+            if getattr(self, "_icon_gen", None) != gen:
+                return
+            while index < self.list.count():
+                it = self.list.item(index)
+                app = it.data(Qt.UserRole) or {}
+                if app.get("path"):
+                    it.setIcon(self._icon(app))
+                    QTimer.singleShot(
+                        0, lambda: self._load_icons(gen, index + 1))
+                    return
+                index += 1
+        except RuntimeError:
+            pass        # dialog closed while icons were still loading
 
     def _refresh(self):
-        self._apps = list_running_apps()
-        self._populate()
+        self._window_apps = list_running_apps()
+        self._process_apps = None       # re-snapshot on next rebuild
+        self._rebuild_apps()
 
     def _browse(self):
         """Choose an .exe that is not running and add it straight away."""
@@ -170,8 +249,10 @@ class AppPicker(QDialog):
         if app is None:
             app = {"title": os.path.splitext(os.path.basename(path))[0],
                    "exe": exe, "path": path}
-            self._apps.append(app)
-            self._populate()
+            if self._window_apps is None:
+                self._window_apps = []
+            self._window_apps.append(app)
+            self._rebuild_apps()
         self.search.clear()
         self._select_app(app)
         return app
@@ -199,8 +280,14 @@ class AppPicker(QDialog):
             if not it.isHidden():
                 visible += 1
         if not self._apps:
-            self.empty.setText(
-                "No running windows found. Start the app, then press Refresh.")
+            if self.show_processes.isChecked():
+                self.empty.setText(
+                    "No running windows or processes found. Start the app, "
+                    "then press Refresh.")
+            else:
+                self.empty.setText(
+                    "No running windows found. Start the app, then press "
+                    "Refresh — or tick “Include background processes”.")
         elif visible == 0:
             self.empty.setText(
                 f"No running app matches “{text.strip()}”. Clear the search "

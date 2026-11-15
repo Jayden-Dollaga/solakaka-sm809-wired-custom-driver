@@ -4,12 +4,15 @@ app.gun_store -- the host-side GUN (recoil pattern) library.
 A gun is the wired firmware's recoil table: 30 bullet rows, each with an
 X/Y cursor offset and a delay.  It has no slots of its own; like a macro it is
 copied into the button entry that uses the ``Set Gun`` action (0x79), so it
-travels with the profile and survives a .pbin round-trip.
+travels with the profile and survives a .pbin round-trip.  The wired firmware
+never executes that table (the vendor build never uploads it), so playback is
+handled by :mod:`app.recoil_player` on the PC.
 
-The library itself is a named, unlimited JSON library (``config/guns.json``),
-mirroring :mod:`app.macro_store`.  Device slots are implicit: the bound button
-carries the rows, and stable ids (``dev:<profile>:<slot>``) are used when rows
-are adopted from an imported profile so the editor keeps pointing at one entry.
+The library itself is a named, unlimited JSON library
+(``data/config/guns.json``), mirroring :mod:`app.macro_store`.  Device slots are
+implicit: the bound button carries the rows, and stable ids
+(``dev:<profile>:<slot>``) are used when rows are adopted from an imported
+profile so the editor keeps pointing at one entry.
 """
 
 from __future__ import annotations
@@ -23,6 +26,11 @@ X_MIN, X_MAX = -255, 255
 Y_MIN, Y_MAX = -255, 255
 DELAY_MIN, DELAY_MAX = 0, 2550
 DELAY_STEP = 10
+
+# Placeholder names for rows adopted from a profile that had no library entry.
+# "Device Gun" is what earlier builds wrote; it is still recognised so those
+# records can pick up the embedded name on a later scan.
+_DEVICE_PATTERN_NAMES = ("Device Gun", "Device Recoil")
 
 
 def default_path():
@@ -69,7 +77,7 @@ class GunStore:
                 self._guns = [
                     {
                         "id": str(g.get("id") or uuid.uuid4().hex[:8]),
-                        "name": str(g.get("name", "Gun")),
+                        "name": str(g.get("name", "Recoil")),
                         "rows": clean_rows(g.get("rows")) or default_rows(),
                     }
                     for g in data if isinstance(g, dict)
@@ -110,7 +118,7 @@ class GunStore:
 
     def unique_name(self, base: str, exclude_id: str | None = None) -> str:
         """Return ``base`` or ``base (2)``/``base (3)``… unused in the library."""
-        base = (base or "").strip() or "Gun"
+        base = (base or "").strip() or "Recoil"
         taken = {g["name"].casefold() for g in self._guns
                  if g["id"] != exclude_id}
         if base.casefold() not in taken:
@@ -124,7 +132,7 @@ class GunStore:
     def add(self, name=None):
         g = {
             "id": uuid.uuid4().hex[:8],
-            "name": name or "New Gun",
+            "name": name or "New Recoil",
             "rows": default_rows(),
         }
         self._guns.append(g)
@@ -137,18 +145,19 @@ class GunStore:
         adopted = clean_rows(rows)
         changed = False
         if g is None:
-            g = {"id": str(gid), "name": name or "Device Gun",
+            g = {"id": str(gid), "name": name or "Device Recoil",
                  "rows": adopted or default_rows()}
             self._guns.append(g)
             changed = True
-        if name and (not g.get("name") or g["name"].startswith("Device Gun")):
+        if name and (not g.get("name")
+                     or g["name"].startswith(_DEVICE_PATTERN_NAMES)):
             if g["name"] != name:
                 g["name"] = name
                 changed = True
         if adopted and adopted != clean_rows(g.get("rows")):
             # Fill a fresh/default record from the profile; a pattern the user
             # has edited is never overwritten by a later profile scan.
-            if g.get("name", "").startswith("Device Gun") or \
+            if g.get("name", "").startswith(_DEVICE_PATTERN_NAMES) or \
                     clean_rows(g.get("rows")) == default_rows():
                 g["rows"] = adopted
                 changed = True

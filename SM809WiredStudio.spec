@@ -119,7 +119,6 @@ datas = [(str(project_root / rel), dest) for rel, dest in _RESOURCES.items()]
 #                                -> app.profile_store -> wired.model / bridge
 #                                -> every app.panels.* and app.widgets.*
 #   run_app -> app.elevation / app.logging_setup / app.log_bridge / app.paths
-#   app.panels.performance_panel -> wired.wheel_direction
 # so the dependency graph needs no hidden imports.  ``sm809pro`` and ``wired``
 # are ordinary packages on ``pathex``.
 #

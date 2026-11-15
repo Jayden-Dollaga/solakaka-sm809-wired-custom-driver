@@ -1,12 +1,14 @@
 """
 app.widgets.controls -- small reusable themed controls used by the settings
-panels (Lighting, Performance): a Card container and a Segmented selector.
+panels (Lighting, Performance, DPI): a Card container, a Segmented selector
+and a numeric value box that sliders keep in sync.
 """
 
 from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
     QFrame, QWidget, QVBoxLayout, QHBoxLayout, QBoxLayout, QLayout, QLabel,
-    QPushButton, QButtonGroup, QSizePolicy,
+    QPushButton, QButtonGroup, QSizePolicy, QLineEdit,
 )
 
 
@@ -61,6 +63,80 @@ class ResponsiveRow(QWidget):
         hint.setWidth(max(self._left.minimumSizeHint().width(),
                           self._right.minimumSizeHint().width()))
         return QSize(hint)
+
+
+class NumericValueBox(QLineEdit):
+    """An editable integer readout for a slider row.
+
+    Dragging a slider to an exact number is fiddly, so the value itself is
+    editable: click it, type digits and press Enter (or Tab away).  A
+    QIntValidator rejects letters at the keystroke level and lets in-range
+    digits through, and nothing is emitted until the edit is committed (a
+    number outside the range settles on the nearest bound), so a half-typed
+    number never reaches the mouse.  Focusing the box selects the current
+    value so typing replaces it.
+
+    A QSpinBox would be the natural widget, but applying a stylesheet border
+    to one with hidden buttons collapses its internal editor to 1 px wide in
+    Qt; a validated line edit keeps the readout framed and editable.
+    """
+
+    committed = Signal(int)          # user finished editing (Enter/Tab away)
+
+    def __init__(self, value: int, minimum: int, maximum: int, width: int = 86):
+        super().__init__(str(int(value)))
+        self._value = int(value)
+        self._min = int(minimum)
+        self._max = int(maximum)
+        self.setValidator(QIntValidator(self._min, self._max, self))
+        self.setInputMethodHints(Qt.ImhDigitsOnly)
+        self.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.setFixedWidth(width)
+        self.editingFinished.connect(self._commit)
+
+    def value(self) -> int:
+        return self._value
+
+    def setValue(self, value: int):
+        """Show `value` without emitting `committed` (slider/profile pushes)."""
+        self._value = max(self._min, min(self._max, int(value)))
+        text = str(self._value)
+        if self.text() != text:
+            self.setText(text)
+
+    def focusInEvent(self, e):
+        super().focusInEvent(e)
+        # Click/Tab into the box: replace the old value instead of inserting
+        # in the middle of it.
+        self.selectAll()
+
+    def keyPressEvent(self, e):
+        if e.key() in (Qt.Key_Return, Qt.Key_Enter):
+            # Qt suppresses editingFinished when the validator reports
+            # Intermediate (for example a lone "0" for a 1-11 slider), which
+            # would leave that text sitting in the box. Commit and clamp
+            # ourselves so Enter always settles the value.
+            self._commit()
+            e.accept()
+            return
+        super().keyPressEvent(e)
+
+    def focusOutEvent(self, e):
+        # Tab/click away commits the same way, including intermediate text.
+        self._commit()
+        super().focusOutEvent(e)
+
+    def _commit(self):
+        text = self.text().strip()
+        try:
+            value = int(text) if text else self._value
+        except ValueError:
+            value = self._value
+        value = max(self._min, min(self._max, value))
+        changed = value != self._value
+        self.setValue(value)         # also repairs empty/partial/out-of-range
+        if changed:
+            self.committed.emit(value)
 
 
 class Card(QFrame):

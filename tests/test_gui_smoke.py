@@ -94,11 +94,10 @@ def test_main_window_applies_profile_and_edits(qapp, tmp_path, monkeypatch):
         # polling + pointer settings
         win._apply_polling(1000)
         win._apply_pointer({"speed": 8, "scroll": 4, "double": 6,
-                            "enhance": True, "onepage": False,
-                            "wheel_reverse": True})
+                            "enhance": True, "onepage": False})
         assert prof.rate == 3            # 1000 Hz -> firmware index 3 (1 ms)
         assert prof.speed == 8
-        assert prof.button(30).action == 0x0C   # reversed wheel
+        assert prof.button(30).action == 0x0B   # normal Scroll Up
 
         # the official Performance page's key-response slider is persisted
         win._apply_key_response(17)
@@ -641,7 +640,7 @@ def test_no_page_needs_horizontal_scrolling_at_minimum_size(
     """Every page must fit the window's advertised minimum width.
 
     Cards and toolbars used to force their own minimum width past the
-    viewport, so a horizontal scrollbar appeared on Buttons, Macro, Gun and
+    viewport, so a horizontal scrollbar appeared on Buttons, Macro, Recoil Control and
     Auto-Switch at 820x560.  This also guards the DPI subtitle, which was a
     single unwrapped line before.
     """
@@ -649,6 +648,7 @@ def test_no_page_needs_horizontal_scrolling_at_minimum_size(
 
     win = _make_window(qapp, tmp_path, monkeypatch)
     try:
+        win._set_developer(True)      # include the Recoil Control preview page
         win.resize(win.minimumSize())
         qapp.processEvents()
         assert win.width() <= 900, "the window minimum grew past a 900 px screen"
@@ -665,6 +665,129 @@ def test_no_page_needs_horizontal_scrolling_at_minimum_size(
                     f"{type(page).__name__} needs {bar.maximum()} px of "
                     f"horizontal scrolling at {win.width()}x{win.height()}")
     finally:
+        win._force_quit = True
+        win.close()
+        qapp.processEvents()
+
+
+def test_recoil_control_is_hidden_until_developer_features_are_enabled(
+        qapp, tmp_path, monkeypatch):
+    """Recoil Control is a work-in-progress preview: the rail entry, its page
+    and the picker category stay out of the normal UI until Settings turns the
+    developer switch on.  Turning it back off stops host playback too."""
+    win = _make_window(qapp, tmp_path, monkeypatch)
+    try:
+        names = [win.nav.item(i).text() for i in range(win.nav.count())]
+        assert "Recoil Control" not in names
+        assert names == ["Buttons", "Macro", "Lighting", "Performance",
+                         "Profiles"]
+        assert "DPI" not in names and "Auto-Switch" not in names
+
+        # DPI stages live on the Performance page, not on their own page
+        win._select_page("Performance")
+        assert win.stack.currentWidget() is win.performance_panel
+        assert win.performance_panel.isAncestorOf(win.dpi_panel)
+        assert win.stack.indexOf(win.dpi_panel) == -1
+
+        # auto-switch content is hosted by the Manage Apps dialog instead
+        assert all(win.stack.widget(i) is not win.autoswitch_panel
+                   for i in range(win.stack.count()))
+
+        # a saved playback preference stays dormant while the tab is hidden
+        win.profiles.set_setting("recoil_host_enabled", True)
+        win.gun_panel._sync_player()
+        assert not win.gun_panel.player.enabled
+
+        win._set_developer(True)
+        names = [win.nav.item(i).text() for i in range(win.nav.count())]
+        assert names == ["Buttons", "Macro", "Recoil Control", "Lighting",
+                         "Performance", "Profiles"]
+        win._select_page("Recoil Control")
+        assert win.stack.currentWidget() is win.gun_panel
+        assert win.gun_panel.host_enable.isChecked()
+        assert win.gun_panel.player.enabled
+        assert win.profiles.get_setting("developer_features") is True
+
+        # turning developer features off while on the preview page falls back
+        # to Buttons and stops the engine
+        win._set_developer(False)
+        assert win.stack.currentWidget() is win.buttons_panel
+        assert not win.gun_panel.player.enabled
+        assert win.profiles.get_setting("developer_features") is False
+        assert win.buttons_panel._developer is False
+    finally:
+        win.gun_panel.player.set_enabled(False)
+        win._force_quit = True
+        win.close()
+        qapp.processEvents()
+
+
+def test_manage_apps_opens_the_popup_for_the_selected_profile(
+        qapp, tmp_path, monkeypatch):
+    """The Profiles tab's Manage apps… button opens the auto-switch content as
+    a popup named Manage Apps, preselected to the clicked profile."""
+    win = _make_window(qapp, tmp_path, monkeypatch)
+    try:
+        pid = win.profiles.active_id
+        assert pid is not None
+
+        win._select_page("Profiles")
+        win._on_manage_apps(pid)
+        qapp.processEvents()
+
+        dlg = win.manage_apps_dialog
+        assert dlg.isVisible()
+        assert dlg.windowTitle() == "Manage Apps"
+        assert dlg.panel is win.autoswitch_panel
+        assert dlg.panel.title_label.text() == "Manage Apps"
+        assert dlg.panel.current_pid() == pid
+        # the popup is not part of the rail/stack
+        assert "Manage Apps" not in [
+            win.nav.item(i).text() for i in range(win.nav.count())]
+        assert all(win.stack.widget(i) is not dlg.panel
+                   for i in range(win.stack.count()))
+
+        # its cards still fit the dialog's own minimum width
+        from PySide6.QtWidgets import QScrollArea
+        dlg.resize(dlg.minimumSize())
+        qapp.processEvents()
+        for scroll in dlg.panel.findChildren(QScrollArea):
+            assert scroll.horizontalScrollBar().maximum() == 0
+
+        dlg.close()
+        qapp.processEvents()
+        assert not dlg.isVisible()
+        # the live foreground readout only polls while the dialog is open
+        assert not dlg.panel._fg_timer.isActive()
+    finally:
+        win._force_quit = True
+        win.close()
+        qapp.processEvents()
+
+
+def test_settings_dialog_offers_the_developer_switch(qapp, tmp_path, monkeypatch):
+    """The only way to reveal Recoil Control is the Settings checkbox."""
+    from PySide6.QtWidgets import QCheckBox, QDialog
+
+    win = _make_window(qapp, tmp_path, monkeypatch)
+    monkeypatch.setattr(QDialog, "exec", lambda self: QDialog.Rejected)
+    try:
+        win._settings()
+        dlg = next(w for w in win.findChildren(QDialog)
+                   if w.windowTitle() == "Settings")
+        boxes = {c.text(): c for c in dlg.findChildren(QCheckBox)}
+        dev = boxes["Enable developer features (work in progress)"]
+        assert not dev.isChecked()          # off by default
+
+        win._set_developer(True)
+        win._settings()
+        dlgs = [w for w in win.findChildren(QDialog)
+                if w.windowTitle() == "Settings"]
+        dev = {c.text(): c for c in dlgs[-1].findChildren(QCheckBox)}[
+            "Enable developer features (work in progress)"]
+        assert dev.isChecked()
+    finally:
+        win.gun_panel.player.set_enabled(False)
         win._force_quit = True
         win.close()
         qapp.processEvents()
@@ -695,7 +818,7 @@ def test_profiles_select_the_active_row_and_explain_empty_lists(qapp):
         qapp.processEvents()
         assert not panel.empty.isHidden()
         assert "No profiles yet" in panel.empty.text()
-        assert "Import profile" in panel.empty.text()
+        assert "Import files" in panel.empty.text()
 
         # A search with no match keeps the list and says the filter is why.
         panel.set_profiles(profiles, active_id="gaming")
@@ -708,6 +831,231 @@ def test_profiles_select_the_active_row_and_explain_empty_lists(qapp):
     finally:
         panel.close()
         panel.deleteLater()
+
+
+def test_auto_switch_moves_the_rail_combo_and_profiles_tab(
+        qapp, tmp_path, monkeypatch):
+    """A matched app must switch the profile EVERYWHERE: the mouse, the rail
+    PROFILE combo and the Profiles tab. The manual base stays untouched, but
+    unmatched windows keep the last matched profile (no base revert).
+
+    This is the real-world gap: the profile was applied but both selections
+    kept showing the base, so auto-switch looked like it had done nothing.
+    It also chains app-to-app (the Alt-Tab/minimize case): game one -> game
+    two -> minimized -> desktop (holds) -> back.
+    """
+    win = _make_window(qapp, tmp_path, monkeypatch)
+    try:
+        base = win.profiles.active_id
+        game = win.profiles.add(
+            "Game Mode", config=win.profiles.config(base),
+            match_rules=[{"exe": "smoke-game.exe", "path": None, "title": None}])
+        other = win.profiles.add(
+            "Second Game", config=win.profiles.config(base),
+            match_rules=[{"exe": "smoke-other.exe", "path": None,
+                          "title": None}])
+        win._refresh_profile_combo()
+        assert win.profile_combo.currentData() == base
+        assert win.profiles_panel.selected_id() == base
+
+        class Watcher:
+            value = ("explorer.exe", "Desktop", r"C:\Windows\explorer.exe")
+
+            def current(self, need_path=False, need_title=True):
+                return self.value
+
+        watcher = Watcher()
+        win._auto._watcher = watcher
+        win._auto._debounce_ms = 0          # switch on the first poll
+        win._toggle_autoswitch(True)
+
+        # the first game comes to the foreground
+        watcher.value = ("smoke-game.exe", "Smoke Game",
+                         r"C:\Games\Smoke\smoke-game.exe")
+        win._auto.poll()
+        assert win._applied_id == game["id"]
+        assert win._pushed_pid == game["id"]       # written to the mouse
+        assert win.profile_combo.currentData() == game["id"]
+        assert win.profiles_panel.selected_id() == game["id"]
+        # ...but the manual base did not move (auto-switch is an override)
+        assert win.profiles.active_id == base
+
+        # a refresh (rename, reorder, rule edit) must not snap it back to base
+        win._refresh_profile_combo()
+        assert win.profile_combo.currentData() == game["id"]
+        assert win.profiles_panel.selected_id() == game["id"]
+
+        # Alt-Tab straight into another game: that profile takes over.
+        watcher.value = ("smoke-other.exe", "Second Game",
+                         r"C:\Games\Other\smoke-other.exe")
+        win._auto.poll()
+        assert win._applied_id == other["id"]
+        assert win._pushed_pid == other["id"]
+        assert win.profile_combo.currentData() == other["id"]
+        assert win.profiles_panel.selected_id() == other["id"]
+
+        # minimize: Windows briefly reports no foreground. Hold the profile
+        # instead of bouncing through the base and writing the mouse twice.
+        watcher.value = (None, "", None)
+        win._auto.poll()
+        assert win._applied_id == other["id"]
+        assert win.profile_combo.currentData() == other["id"]
+
+        # a real non-matching window (desktop/taskbar) HOLDS the last profile:
+        # it must never push a rule-less profile to the mouse
+        watcher.value = ("explorer.exe", "Desktop", r"C:\Windows\explorer.exe")
+        win._auto.poll()
+        assert win._applied_id == other["id"]
+        assert win.profile_combo.currentData() == other["id"]
+        assert win.profiles_panel.selected_id() == other["id"]
+        assert win.profiles.active_id == base
+
+        # restoring the first game switches back to it
+        watcher.value = ("smoke-game.exe", "Smoke Game",
+                         r"C:\Games\Smoke\smoke-game.exe")
+        win._auto.poll()
+        assert win._applied_id == game["id"]
+        assert win.profiles_panel.selected_id() == game["id"]
+    finally:
+        win._auto.set_enabled(False)
+        win._force_quit = True
+        win.close()
+        qapp.processEvents()
+
+
+def test_auto_switch_announces_with_the_overlay_not_a_tray_toast(
+        qapp, tmp_path, monkeypatch):
+    """The applied profile is announced by the on-screen overlay.
+
+    The tray toast is gone; the switch card still appears when the ambient
+    overlay (DPI/rate) is off, and the dedicated "Announce profile switches"
+    setting can silence it without bringing the toast back.
+    """
+    win = _make_window(qapp, tmp_path, monkeypatch)
+    try:
+        win._overlay_enabled = False       # the ambient overlay is off
+        win._overlay_switch = True
+        base = win.profiles.active_id
+        game = win.profiles.add(
+            "Overlay Game", config=win.profiles.config(base),
+            match_rules=[{"exe": "overlay-game.exe"}])
+        other = win.profiles.add(
+            "Overlay Two", config=win.profiles.config(base))
+        win._refresh_profile_combo()
+
+        flashes, toasts = [], []
+        win.overlay.flash_lines = (
+            lambda lines, hold_ms=None: flashes.append([tuple(x) for x in lines]))
+        if win.tray is not None:
+            win.tray.showMessage = lambda *a, **k: toasts.append(a)
+
+        class Watcher:
+            def current(self, need_path=False, need_title=True):
+                return ("overlay-game.exe", "Overlay Game",
+                        r"C:\Games\Overlay\overlay-game.exe")
+
+        win._auto._watcher = Watcher()
+        win._auto._debounce_ms = 0
+        win._toggle_autoswitch(True)
+        win._auto.poll()
+        assert win._applied_id == game["id"]
+        assert [("Switching to", "Overlay Game")] in flashes
+        assert toasts == []
+
+        # the finished-apply notice is the profile card (ambient overlay off)
+        flashes.clear()
+        win._overlay_pending = True        # simulate the apply queue draining
+        win._on_busy_overlay(False)
+        assert flashes == [[("Profile", "Overlay Game")]]
+
+        # turning the dedicated switch off silences the card, not the toast
+        win._overlay_switch = False
+        flashes.clear()
+        win._apply_by_id(other["id"])
+        assert flashes == []
+        assert toasts == []
+    finally:
+        win._auto.set_enabled(False)
+        win._force_quit = True
+        win.close()
+        qapp.processEvents()
+
+
+def test_failed_apply_is_retried_and_settles_the_switch_card(
+        qapp, tmp_path, monkeypatch):
+    """A failed write must not poison the "already pushed" cache.
+
+    After a failure the next identical selection (the next rule match, or a
+    manual Apply) has to reach the mouse again, and the in-flight switch card
+    has to be replaced by a truthful "Not applied" notice instead of hanging on
+    "Switching to ..." forever.
+    """
+    win = _make_window(qapp, tmp_path, monkeypatch)
+    try:
+        win._overlay_enabled = False
+        win._overlay_switch = True
+        flashes, calls = [], []
+        win.overlay.flash_lines = (
+            lambda lines, hold_ms=None: flashes.append([tuple(x) for x in lines]))
+        win.ctrl.call = lambda *a, **k: calls.append(a)
+
+        base = win.profiles.active_id
+        game = win.profiles.add(
+            "Fail Game", config=win.profiles.config(base),
+            match_rules=[{"exe": "fail-game.exe"}])
+        win._apply_by_id(game["id"])
+        assert win._pushed_pid == game["id"]
+        assert win._overlay_pending is True
+        assert flashes == [[("Switching to", "Fail Game")]]
+
+        win._on_command_done("apply_config", False)
+        assert win._pushed_pid is None
+        assert win._pushed_config is None
+        assert win._overlay_pending is False
+        assert flashes[-1] == [("Not applied", "Fail Game")]
+
+        # the identical retry is written again instead of being deduped away
+        win._apply_by_id(game["id"])
+        assert win._pushed_pid == game["id"]
+        assert len(calls) == 2
+    finally:
+        win._force_quit = True
+        win.close()
+        qapp.processEvents()
+
+
+def test_skipped_apply_never_leaves_the_switch_card_pending(
+        qapp, tmp_path, monkeypatch):
+    """Selecting a profile already on the mouse settles the card immediately.
+
+    The dedupe path returns False (nothing queued), so there is no busy signal
+    coming to clear a pending "Switching to ..." notice.
+    """
+    win = _make_window(qapp, tmp_path, monkeypatch)
+    try:
+        win._overlay_enabled = False
+        win._overlay_switch = True
+        calls = []
+        win.ctrl.call = lambda *a, **k: calls.append(a)
+        flashes = []
+        win.overlay.flash_lines = (
+            lambda lines, hold_ms=None: flashes.append([tuple(x) for x in lines]))
+
+        base = win.profiles.active_id
+        twin = win.profiles.add("Twin", config=win.profiles.config(base))
+        # Pretend the twin is what the mouse already has; the UI still shows base.
+        win._pushed_pid = twin["id"]
+        win._pushed_config = win.profiles.config(twin["id"])
+        win._applied_id = base
+
+        win._apply_by_id(twin["id"])
+        assert calls == []                   # identical config -> no device write
+        assert win._overlay_pending is False
+        assert flashes == [[("Switching to", "Twin")], [("Profile", "Twin")]]
+    finally:
+        win._force_quit = True
+        win.close()
+        qapp.processEvents()
 
 
 def test_gun_how_to_steps_expand_on_demand(qapp, tmp_path):
@@ -728,7 +1076,8 @@ def test_gun_how_to_steps_expand_on_demand(qapp, tmp_path):
         qapp.processEvents()
         assert not panel.how_steps.isHidden()
         assert "Hide" in panel.how_toggle.text()
-        assert "Open Buttons" in panel.how_steps.text()
+        assert "Enable host playback" in panel.how_steps.text()
+        assert "wired mouse will not execute it" in panel.how_steps.text()
 
         panel.how_toggle.click()
         assert panel.how_steps.isHidden()
@@ -760,7 +1109,7 @@ def test_autoswitch_hides_the_empty_rules_box(qapp):
         panel.deleteLater()
 
 
-def test_action_picker_offers_gun_patterns(qapp, tmp_path):
+def test_action_picker_offers_recoil_patterns(qapp, tmp_path):
     from app.gun_store import GunStore
     from app.widgets.action_picker import CATEGORY_ORDER, ActionPicker
 
@@ -768,9 +1117,9 @@ def test_action_picker_offers_gun_patterns(qapp, tmp_path):
     g = store.add("AK")
     store.set_rows(g["id"], [[5, -5, 20]])
 
-    picker = ActionPicker((0, 0, 0), guns=store.all())
+    picker = ActionPicker((0, 0, 0), guns=store.all(), developer=True)
     try:
-        picker.cats.setCurrentRow(CATEGORY_ORDER.index("Gun"))
+        picker.cats.setCurrentRow(CATEGORY_ORDER.index("Recoil Control"))
         assert picker.stack.currentIndex() == 4
         picker.gun_editor.repeat.setCurrentIndex(2)      # 3x
         code = picker._current_code()
@@ -839,7 +1188,7 @@ def test_buttons_panel_reports_shared_table_budget(qapp):
         codes[i] = {"gun": f"g{i}", "rows": [[1, 1, 10]]}
 
     panel.set_codes(codes)
-    assert "13 macro/gun tables" in panel.budget.text()
+    assert "13 macro / recoil tables" in panel.budget.text()
     assert "last 2 will not work" in panel.budget.text()
     assert panel.budget.styleSheet()          # visible warning styling
 
@@ -849,3 +1198,41 @@ def test_buttons_panel_reports_shared_table_budget(qapp):
     panel.set_codes(codes)
     assert panel.budget.text() == ""
     panel.deleteLater()
+
+
+def test_new_profile_dialog_prefills_the_next_number(qapp, tmp_path, monkeypatch):
+    """New Profile suggests Profile N by position, even after custom renames."""
+    from PySide6.QtWidgets import QInputDialog
+
+    win = _make_window(qapp, tmp_path, monkeypatch)
+    seen = []
+
+    def fake_get_text(parent, title, label, text=""):
+        seen.append((title, text))
+        return text, True
+
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(fake_get_text))
+    try:
+        # GUI tests share one scratch device table, so derive the expected
+        # number from the current count instead of assuming a fresh seed.
+        start = len(win.profiles.summaries())
+        # The active profile gets a custom name; it keeps its position.
+        win.profiles.rename(win.profiles.active_id, "Valorant")
+        win._refresh_profile_combo()
+
+        win._profile_new()
+        assert seen[-1] == ("New profile", f"Profile {start + 1}")
+        assert win.profiles.get(win.profiles.active_id)["name"] == \
+            f"Profile {start + 1}"
+
+        # Rename the new one: the next suggestion follows the count, not names.
+        win.profiles.rename(win.profiles.active_id, "Delta Force")
+        win._refresh_profile_combo()
+        win._profile_new()
+        assert seen[-1] == ("New profile", f"Profile {start + 2}")
+        assert win.profiles.get(win.profiles.active_id)["name"] == \
+            f"Profile {start + 2}"
+    finally:
+        win._force_quit = True
+        win.close()
+        qapp.processEvents()

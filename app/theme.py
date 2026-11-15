@@ -327,17 +327,70 @@ def stylesheet() -> str:
         font-size: 12px;
         font-weight: 700;
     }}
-    QLabel#dpiValue {{
+    /* The DPI readout is an editable number box that still looks like a
+       value, not like a form field: no frame until the pointer or focus
+       arrives. */
+    QLineEdit#dpiValue {{
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        padding: 1px 4px;
         font-family: {FONT_MONO};
         font-size: 20px;
         font-weight: 600;
         color: {TEXT};
+        selection-background-color: {ACCENT};
+        selection-color: #1a1008;
     }}
-    QLabel#dpiValueActive {{
+    QLineEdit#dpiValue:hover {{
+        border-color: {BORDER};
+    }}
+    QLineEdit#dpiValue:focus {{
+        border-color: {ACCENT};
+        background: {SURFACE_2};
+    }}
+    QLineEdit#dpiValue:disabled {{
+        color: {TEXT_DIM};
+    }}
+    QLineEdit#dpiValueActive {{
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        padding: 1px 4px;
         font-family: {FONT_MONO};
         font-size: 20px;
         font-weight: 600;
         color: {ACCENT};
+        selection-background-color: {ACCENT};
+        selection-color: #1a1008;
+    }}
+    QLineEdit#dpiValueActive:hover {{
+        border-color: {BORDER};
+    }}
+    QLineEdit#dpiValueActive:focus {{
+        border-color: {ACCENT};
+        background: {SURFACE_2};
+    }}
+    /* The Performance readouts are editable too; same quiet look at the
+       smaller value size, accent orange like the old QLabel. */
+    QLineEdit#perfValue {{
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        padding: 0px 4px;
+        font-family: {FONT_MONO};
+        font-size: 16px;
+        font-weight: 600;
+        color: {ACCENT};
+        selection-background-color: {ACCENT};
+        selection-color: #1a1008;
+    }}
+    QLineEdit#perfValue:hover {{
+        border-color: {BORDER};
+    }}
+    QLineEdit#perfValue:focus {{
+        border-color: {ACCENT};
+        background: {SURFACE_2};
     }}
     QLabel[unit="true"] {{
         color: {TEXT_DIM};

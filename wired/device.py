@@ -61,6 +61,21 @@ class DeviceError(RuntimeError):
     pass
 
 
+# A mouse left in the vendor updater's ISP bootloader enumerates as PID 8022.
+# It is alive on the bus but does not implement the profile protocol, so the
+# generic "not found" text sends the user looking for a cable problem.
+BOOTLOADER_ERROR = (
+    "SM809 is in firmware-update mode (bootloader PID 8022). "
+    "Finish the firmware update and replug the mouse.")
+
+
+def connection_error(config: DeviceConfig, bootloader: bool) -> str:
+    """Explain why the profile link could not be opened."""
+    if bootloader:
+        return BOOTLOADER_ERROR
+    return f"SM809 not found (VID {config.vid:04X} / PID {config.pid:04X})"
+
+
 @dataclass
 class ApplyResult:
     ok: bool
@@ -79,6 +94,7 @@ class DeviceStatus:
     linked: bool = False
     version: tuple[int, int] = (0, 0)
     last_error: str = ""
+    bootloader: bool = False
 
 
 class DeviceService:
@@ -150,17 +166,23 @@ class DeviceService:
     # -- connection --------------------------------------------------------
     @property
     def status(self) -> DeviceStatus:
+        present = self.present()
         return DeviceStatus(
-            present=self.present(),
+            present=present,
             linked=self.linked,
             version=self.version,
             last_error=self.last_error,
+            bootloader=False if present else self.bootloader_present(),
         )
 
     def present(self) -> bool:
         if self.demo:
             return True
         return bool(self.transport.enumerate())
+
+    def bootloader_present(self) -> bool:
+        """Whether the mouse is sitting in the vendor's ISP bootloader."""
+        return self.transport.bootloader_present()
 
     def connect(self) -> bool:
         """Open the device, run the link handshake and the status frames."""
@@ -172,8 +194,12 @@ class DeviceService:
             self._applied.clear()
             if not self.transport.open():
                 self.linked = False
-                self.last_error = "SM809 not found (VID 04D9 / PID A09F)"
-                _log.debug("HID open failed: %s", self.last_error)
+                bootloader = self.bootloader_present()
+                self.last_error = connection_error(self.config, bootloader)
+                if bootloader:
+                    _log.warning("%s", self.last_error)
+                else:
+                    _log.debug("HID open failed: %s", self.last_error)
                 return False
             _log.debug("HID link opened (VID %04X / PID %04X)", self.config.vid, self.config.pid)
             try:
@@ -615,10 +641,11 @@ class DeviceService:
 
         if gun_count:
             result.warnings.append(
-                f"{gun_count} gun pattern(s) uploaded. The vendor build hid its "
-                "Gun page and never copied gun tables into the upload buffer, "
-                "so the studio's encoder is inferred; treat this as "
-                "experimental and verify a small pattern on hardware."
+                f"{gun_count} recoil pattern(s) stored in the profile. Wired "
+                "firmware does not execute recoil tables: the vendor build hid "
+                "its Gun page and never copied gun tables into the upload "
+                "buffer. Enable developer features in Settings, then use host "
+                "playback in the Recoil Control tab to run the pattern."
             )
         if self.config.distance == 0:
             result.warnings.append(

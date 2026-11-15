@@ -14,7 +14,7 @@ vendor software's behaviour.
   "runas" once; ``--no-elevate`` skips that, and ``--demo`` never relaunches
   from source. (A packaged exe elevates through its manifest regardless.)
 - If UAC is declined, the studio keeps running unelevated after a native
-  warning; the Auto-Switch page then shows a reminder that elevated games may
+  warning; the Manage Apps dialog then shows a reminder that elevated games may
   not be detected.
 """
 

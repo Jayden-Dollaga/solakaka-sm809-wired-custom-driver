@@ -155,8 +155,8 @@ BTN = {
 }
 
 ACTION_LABELS = {
-    "unset": "Disabled",
-    "left": "Left Click", "right": "Right Click", "middle": "Middle Click",
+    "unset": "Disabled", "disable": "Button Off",
+    "left": "Left Click", "right": "Right Click", "middle": "Middle Button",
     "forward": "Forward", "back": "Backward", "double": "Double Click",
     "scroll_up": "Scroll Up", "scroll_down": "Scroll Down",
     "triple": "Three Click", "dpi_cycle": "DPI Cycle", "dpi_up": "DPI +",

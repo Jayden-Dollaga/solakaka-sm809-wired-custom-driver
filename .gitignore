@@ -95,6 +95,9 @@ journal.txt
 # macro library or settings backups).
 data/
 backups/
+# Pre-upgrade host library (profiles/macros/guns). The live copies now live in
+# data/config; this folder is only kept as a manual backup after migration.
+config/
 
 .venv
 .pytest_cache

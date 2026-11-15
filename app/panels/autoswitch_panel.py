@@ -1,12 +1,18 @@
 """
-app.panels.autoswitch_panel -- the Auto-Switch settings tab.
+app.panels.autoswitch_panel -- per-app auto-switch configuration.
+
+This is the content of the Manage Apps dialog, opened from the Profiles tab's
+"Manage apps…" button (it is no longer a rail page).  The title is injectable
+so the dialog can present the same feature under its own name.
 
 Master-detail rule editor: the left list shows every profile; clicking one
 shows the apps assigned to it on the right. A rule matches the focused app by
 exe name, by a full-path substring (to tell apart same-named exes like UE/Unity
 Client-Win64-Shipping.exe), and/or a window-title substring. All filled fields
-must match. First matching profile in list order wins; when nothing matches the
-manually-chosen base profile is restored (see app/autoswitch.py).
+must match, though a stored path is only a preference: an app that moved to a
+new versioned folder still matches by exe. First matching profile in list order
+wins. When nothing matches, the profile already on the mouse stays (see
+app/autoswitch.py).
 
 "Add app…" opens a picker of running windows (like the NVIDIA Control Panel
 program list) and assigns the chosen app immediately. "Detect app" does the
@@ -37,7 +43,7 @@ class AutoSwitchPanel(QWidget):
     rules_changed = Signal(str, object)
     app_detected = Signal(str, str)        # (exe, title) captured by "Detect app"
 
-    def __init__(self):
+    def __init__(self, title="Auto-Switch", subtitle=None):
         super().__init__()
         self._profiles = []          # list of profile dicts (id, name, match_rules)
         self._rules_by_pid = {}      # pid -> list[rule]
@@ -49,34 +55,48 @@ class AutoSwitchPanel(QWidget):
         lay.setContentsMargins(28, 24, 28, 24)
         lay.setSpacing(14)
 
-        title = QLabel("Auto-Switch")
-        title.setProperty("panelTitle", "true")
-        lay.addWidget(title)
-        sub = QLabel("Automatically switch profiles based on the focused application "
-                     "— a feature the official software doesn't have.")
-        sub.setProperty("panelSubtitle", "true")
-        sub.setWordWrap(True)
-        lay.addWidget(sub)
+        self.title_label = QLabel(title)
+        self.title_label.setProperty("panelTitle", "true")
+        lay.addWidget(self.title_label)
+        self.subtitle_label = QLabel(
+            subtitle or "Automatically switch profiles based on the focused "
+                        "application — a feature the official software doesn't "
+                        "have.")
+        self.subtitle_label.setProperty("panelSubtitle", "true")
+        self.subtitle_label.setWordWrap(True)
+        lay.addWidget(self.subtitle_label)
 
         # enable card
         enable_card = Card("Enable")
         self.enable_check = QCheckBox("Enable auto-switch")
         self.enable_check.toggled.connect(self._on_enable)
         enable_card.add(self.enable_check)
-        hint = QLabel("When on, the active profile follows the foreground app. With "
-                      "no rule match it reverts to the profile you picked manually "
-                      "(the base). Keep the app running (it lives in the tray).")
+        hint = QLabel("When on, the active profile follows the foreground app — "
+                      "Alt-Tab or minimize to another game and that game's "
+                      "profile takes over. Windows with no rule (desktop, chat, "
+                      "this studio) leave the last profile in place. Turning "
+                      "auto-switch off returns to the profile you picked "
+                      "manually. Keep the studio running (it lives in the tray).")
         hint.setProperty("cardHint", "true")
         hint.setWordWrap(True)
         enable_card.add(hint)
+
+        detect_hint = QLabel(
+            "Detection reads the process list the way Task Manager does — it "
+            "does not open or inject into the game. A full image path is only "
+            "read when a rule uses one.")
+        detect_hint.setProperty("cardHint", "true")
+        detect_hint.setWordWrap(True)
+        enable_card.add(detect_hint)
 
         # The official driver runs with administrator rights. A non-elevated
         # studio cannot inspect some elevated games (anti-cheat launchers), so
         # say so where the feature is configured instead of failing silently.
         self.admin_hint = QLabel(
-            "Not running as administrator — games that run elevated (some "
-            "anti-cheat titles) may not be detected. Restart the studio as "
-            "administrator to match the official driver.")
+            "Not running as administrator — elevated games (some anti-cheat "
+            "titles) can match by exe name only; their window titles and full "
+            "paths are unreadable. Restart the studio as administrator so "
+            "path and title conditions work too.")
         self.admin_hint.setProperty("cardHint", "true")
         self.admin_hint.setStyleSheet(f"color: {theme.WARN};")
         self.admin_hint.setWordWrap(True)
@@ -205,6 +225,15 @@ class AutoSwitchPanel(QWidget):
         self.enable_check.blockSignals(True)
         self.enable_check.setChecked(bool(on))
         self.enable_check.blockSignals(False)
+        if on and not self._any_rules():
+            # Turning the feature on with nothing to match is the one silent
+            # failure the old UI had: no error, no switch, no clue why.
+            self.status.setText(
+                "Auto-switch is on, but no profile has custom apps yet — it "
+                "will never trigger. Pick the profile below, then press "
+                "Add app… while the game/app is running.")
+        elif not on and self.status.text().startswith("Auto-switch is on"):
+            self.status.setText("")
 
     def current_pid(self):
         it = self.profile_list.currentItem()
@@ -258,6 +287,9 @@ class AutoSwitchPanel(QWidget):
     def _set_controls_enabled(self, on):
         for w in (self.add_btn, self.detect_btn, self.rm_btn):
             w.setEnabled(bool(on))
+
+    def _any_rules(self):
+        return any(self._rules_by_pid.get(p["id"]) for p in self._profiles)
 
     def _emit_rules(self, pid=None):
         pid = pid or self.current_pid()
@@ -370,5 +402,8 @@ class AutoSwitchPanel(QWidget):
         if pid:
             self.foreground.setText(
                 f"Foreground: {exe} — matches {self._name_of(pid)}")
+        elif not self._any_rules():
+            self.foreground.setText(
+                f"Foreground: {exe} — no custom apps configured yet")
         else:
             self.foreground.setText(f"Foreground: {exe} — no profile match")

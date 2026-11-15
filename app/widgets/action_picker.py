@@ -4,9 +4,15 @@ app.widgets.action_picker -- the action selection dialog + code<->label helpers.
 Mirrors the official software's right-click menu. Produces a 3-byte action code
 (type, p1, p2) for a chosen action, and renders any code back to a human label.
 
-Categories (from the official menu + verified codes in sm809pro.actions):
-  Mouse, DPI, Fire Key, Three Click, Macro, Key Combination, Multimedia,
-  Word Office, Window Management, DPI Lock, Disable.
+Categories follow the vendor menu (res/buttonmenu.xml): Basic function, High
+order function, Fire Click, Button Off, Shortcut, Macro, DPI, Report,
+Multimedia, Windows, Office, Advance Function.  The macro group uses the
+studio's shorter "Macro" wording (the vendor calls it "Select A Macro").  The
+studio adds a Recoil Control pane (the vendor hides its gun entries on the
+wired build) and keeps Mode Switch inside Advance Function.  Recoil Control is
+a developer preview: the category is hidden unless the caller passes
+`developer=True`, although an already-bound recoil pattern always reopens its
+editor so old profiles stay inspectable.
 
 `pick_action(current_code, parent)` shows the dialog and returns a new code
 (tuple) or None if cancelled.
@@ -91,9 +97,9 @@ def describe_action(code) -> str:
         path = code.get("runapp") or ""
         return f"Run App: {os.path.basename(path) or '(none)'}"
     if isinstance(code, dict) and "gun" in code:
-        name = code.get("name") or "Gun"
+        name = code.get("name") or "Recoil"
         rep = max(1, min(3, int(code.get("repeat", 1) or 1)))
-        return f"Gun: {name} (x{rep})"
+        return f"Recoil: {name} (x{rep})"
     if isinstance(code, dict) and "macro" in code:
         name = (_MACRO_RESOLVER(code["macro"]) if _MACRO_RESOLVER else None) or "Macro"
         pm = code.get("playmode", 1)
@@ -114,7 +120,7 @@ def describe_action(code) -> str:
     if t == 0x0A:  # wired rapid fire
         return f"Fire ({p1}ms x{p2 or '∞'})"
     if t == 0x16:
-        return "Select Macro"
+        return "Macro"
     if t == 0xFF:
         return "(unset)"
     from wired.protocol import action_label
@@ -122,35 +128,38 @@ def describe_action(code) -> str:
 
 
 # ---- category tree (for the picker UI) -------------------------------------
-# Each category yields either a flat list of (label, code) or a custom editor.
+# The vendor's button menu (res/buttonmenu.xml + Language/lan.xml) is a
+# two-level context menu.  This dialog keeps that structure and wording while
+# presenting it as a modern two-pane picker: the left list is the vendor's
+# top level, the right pane is its submenu.
+#
+# Group membership and order follow the original exactly.  The vendor's wired
+# build hides Mode Switch, Send Gun and Select Gun; the studio keeps Mode
+# Switch (the layer toggle is useful) and offers Gun as an explicit extra,
+# while Send Gun stays out of the menu because this firmware has no gun table
+# for it to play.
 ACTION_TREE = {
-    "Mouse": [
+    "Basic function": [
         ("Left Click", A.BTN["left"]), ("Right Click", A.BTN["right"]),
-        ("Middle Click", A.BTN["middle"]), ("Forward", A.BTN["forward"]),
-        ("Backward", A.BTN["back"]), ("Double Click", A.BTN["double"]),
-        ("Scroll Up", A.BTN["scroll_up"]), ("Scroll Down", A.BTN["scroll_down"]),
+        ("Middle Button", A.BTN["middle"]), ("Forward", A.BTN["forward"]),
+        ("Backward", A.BTN["back"]), ("Scroll Up", A.BTN["scroll_up"]),
+        ("Scroll Down", A.BTN["scroll_down"]),
+    ],
+    "High order function": [
+        ("Double Click", A.BTN["double"]), ("Three Click", A.BTN["triple"]),
+        ("Light Mode Switch", A.BTN["light_toggle"]),
+        ("Sniper Key", A.BTN["sniper"]),
+    ],
+    "Button Off": [
+        ("Button Off", A.BTN["disable"]),
     ],
     "DPI": [
-        ("DPI +", A.BTN["dpi_up"]), ("DPI -", A.BTN["dpi_down"]),
-        ("DPI Cycle", A.BTN["dpi_cycle"]), ("Sniper Key", A.BTN["sniper"]),
+        ("DPI Cycle", A.BTN["dpi_cycle"]), ("DPI +", A.BTN["dpi_up"]),
+        ("DPI -", A.BTN["dpi_down"]),
     ],
-    "Quick": [
-        ("Three Click", A.BTN["triple"]), ("Fire Key", A.BTN["fire"]),
-        ("Mode Switch", A.BTN["mode_switch"]), ("Send Gun", A.BTN["send_gun"]),
-        ("Light Mode Switch", A.BTN["light_toggle"]),
-        ("Report +", A.BTN["report_up"]), ("Report -", A.BTN["report_down"]),
+    "Report": [
         ("Report Cycle", A.BTN["report_cycle"]),
-        ("Disable", A.BTN["disable"]),
-    ],
-    "Windows": [
-        ("Cut", A.BTN["cut"]), ("Copy", A.BTN["copy"]), ("Paste", A.BTN["paste"]),
-        ("Open", A.BTN["open"]), ("Save", A.BTN["save"]), ("Find", A.BTN["find"]),
-        ("Redo", A.BTN["undo"]), ("Select All", A.BTN["select_all"]),
-        ("Print", A.BTN["print"]), ("New", A.BTN["new"]),
-        ("Close Window", A.BTN["close_window"]),
-        ("Swap Windows", A.BTN["swap_windows"]),
-        ("Show Desktop", A.BTN["display_desktop"]),
-        ("Run Command", A.BTN["run"]), ("Lock PC", A.BTN["lock_pc"]),
+        ("Report +", A.BTN["report_up"]), ("Report -", A.BTN["report_down"]),
     ],
     "Multimedia": [
         ("Media Player", A.BTN["media_select"]), ("Play / Pause", A.BTN["play_pause"]),
@@ -158,22 +167,41 @@ ACTION_TREE = {
         ("Next Track", A.BTN["next_track"]), ("Volume +", A.BTN["vol_up"]),
         ("Volume -", A.BTN["vol_down"]), ("Mute", A.BTN["mute"]),
     ],
-    "Browser": [
+    "Windows": [
         ("Browser Home", A.BTN["browser_home"]),
-        ("Favorites", A.BTN["browser_favorites"]),
-        ("Forward", A.BTN["browser_forward"]),
-        ("Backward", A.BTN["browser_back"]),
-        ("Stop", A.BTN["browser_stop"]),
-        ("Refresh", A.BTN["browser_refresh"]),
-        ("Search", A.BTN["browser_search"]),
+        ("Browser Favorites", A.BTN["browser_favorites"]),
+        ("Browser Forward", A.BTN["browser_forward"]),
+        ("Browser Backward", A.BTN["browser_back"]),
+        ("Browser Stop", A.BTN["browser_stop"]),
+        ("Browser Refresh", A.BTN["browser_refresh"]),
+        ("Browser Search", A.BTN["browser_search"]),
         ("Email", A.BTN["email"]), ("Calculator", A.BTN["calculator"]),
         ("My Computer", A.BTN["my_computer"]),
     ],
+    "Office": [
+        ("Cut", A.BTN["cut"]), ("Copy", A.BTN["copy"]), ("Paste", A.BTN["paste"]),
+        ("Open", A.BTN["open"]), ("Save", A.BTN["save"]), ("Find", A.BTN["find"]),
+        ("Redo", A.BTN["undo"]), ("Select All", A.BTN["select_all"]),
+        ("New", A.BTN["new"]), ("Print", A.BTN["print"]),
+    ],
+    "Advance Function": [
+        ("Swap Windows", A.BTN["swap_windows"]),
+        ("Close Window", A.BTN["close_window"]),
+        ("Show Desktop", A.BTN["display_desktop"]),
+        ("Lock PC", A.BTN["lock_pc"]), ("Run Command", A.BTN["run"]),
+        # Vendor-hidden on the wired build; kept because the studio's
+        # Office/Game layers can still be toggled from a mouse button.
+        ("Mode Switch", A.BTN["mode_switch"]),
+    ],
 }
 # Categories needing a custom editor pane (not just a list):
-CUSTOM_CATEGORIES = ["Key Combination", "Fire Key", "Macro", "Gun"]
-CATEGORY_ORDER = (["Mouse", "DPI", "Quick", "Key Combination", "Fire Key",
-                   "Macro", "Gun", "Windows", "Multimedia", "Browser"])
+CUSTOM_CATEGORIES = ["Shortcut", "Fire Click", "Macro", "Recoil Control"]
+CATEGORY_ORDER = (["Basic function", "High order function", "Fire Click",
+                   "Button Off", "Shortcut", "Macro", "Recoil Control", "DPI",
+                   "Report", "Multimedia", "Windows", "Office",
+                   "Advance Function"])
+# Editor pane index for each custom category (0 is the shared list pane).
+EDITOR_PANE = {"Shortcut": 1, "Fire Click": 2, "Macro": 3, "Recoil Control": 4}
 
 
 class _ComboEditor(QWidget):
@@ -451,7 +479,7 @@ class _MacroEditor(QWidget):
 
 
 class _GunEditor(QWidget):
-    """Bind a button to a recoil pattern from the Gun library + repeat count."""
+    """Bind a button to a recoil pattern from the library + repeat count."""
     changed = Signal()
 
     def __init__(self, guns=None):
@@ -462,13 +490,14 @@ class _GunEditor(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(16, 16, 16, 16)
         lay.setSpacing(12)
-        lay.addWidget(QLabel("Gun pattern"))
+        lay.addWidget(QLabel("Recoil pattern"))
         self.gun = QComboBox()
         if self._order:
             for gid in self._order:
                 self.gun.addItem(self._guns[gid]["name"], gid)
         else:
-            self.gun.addItem("(no patterns — create one in the Gun tab)", None)
+            self.gun.addItem("(no patterns — create one in the Recoil Control tab)",
+                             None)
             self.gun.setEnabled(False)
         lay.addWidget(self.gun)
         lay.addWidget(QLabel("Repeat"))
@@ -495,7 +524,7 @@ class _GunEditor(QWidget):
     def problem(self) -> str:
         g = self._current()
         if not g:
-            return "create a pattern in the Gun tab first"
+            return "create a pattern in the Recoil Control tab first"
         if not g.get("rows"):
             return "the pattern has no bullets"
         return gun_binding_problem(g.get("rows") or [])
@@ -511,15 +540,20 @@ class _GunEditor(QWidget):
         rows = g.get("rows") or []
         size = gun_encoded_size(rows)
         notes = [f"{len(rows)} bullets, {size}/128 encoded bytes."]
+        warn = False
         if all(int(r[0]) == 0 and int(r[1]) == 0 for r in rows):
             notes.append("Every offset is zero: the pattern only pauses, it "
                          "does not move the crosshair.")
+            warn = True
         elif any(int(r[0]) < 0 or int(r[1]) < 0 for r in rows):
-            notes.append("Negative offsets are sent as their absolute value: "
-                         "the firmware has no sign, so the pull is always "
-                         "right/down. Keep X and Y positive.")
+            notes.append("Host playback honors negative offsets; the uploaded "
+                         "table (unused by the wired mouse) stores only the "
+                         "magnitude.")
+            warn = True
+        notes.append("The wired mouse does not run this table — enable "
+                     "developer features in Settings, then use host playback "
+                     "in the Recoil Control tab.")
         self.hint.setText(" ".join(notes))
-        warn = (len(notes) > 1)
         self.hint.setStyleSheet(
             f"color: {theme.WARN if warn else theme.TEXT_DIM};")
         self.changed.emit()
@@ -534,7 +568,7 @@ class _GunEditor(QWidget):
             # A pattern embedded in this profile but absent from the library.
             self._override = {
                 "id": gid,
-                "name": binding.get("name") or "Device Gun",
+                "name": binding.get("name") or "Device Recoil",
                 "rows": list(binding.get("rows") or []),
             }
             self.gun.addItem(self._override["name"], gid)
@@ -551,7 +585,7 @@ class _GunEditor(QWidget):
             return None
         return {
             "gun": gid,
-            "name": g.get("name") or "Gun",
+            "name": g.get("name") or "Recoil",
             "rows": [list(r) for r in g.get("rows") or []],
             "repeat": max(1, min(3, int(self.repeat.currentData() or 1))),
         }
@@ -559,7 +593,7 @@ class _GunEditor(QWidget):
 
 class ActionPicker(QDialog):
     def __init__(self, current_code=None, parent=None, phys=None, macros=None,
-                 guns=None):
+                 guns=None, developer=False):
         super().__init__(parent)
         self.setWindowTitle("Assign action")
         self.setModal(True)
@@ -568,6 +602,14 @@ class ActionPicker(QDialog):
         self._phys = phys   # 0-based firmware slot being edited (for "Default")
         self._macros = macros or []
         self._guns = guns or []
+        self._developer = bool(developer)
+        # Recoil Control is a work-in-progress preview.  Keep it out of the
+        # category list unless developer features are on, but always include
+        # it when this slot already holds a pattern so it can be edited.
+        self._shown_cats = [name for name in CATEGORY_ORDER
+                      if name != "Recoil Control" or self._developer
+                      or (isinstance(current_code, dict)
+                          and "gun" in current_code)]
         self.setStyleSheet(f"""
             QDialog {{ background: {theme.BG}; }}
             QLabel {{ color: {theme.TEXT_DIM}; }}
@@ -609,7 +651,7 @@ class ActionPicker(QDialog):
         # left: category list
         self.cats = QListWidget()
         self.cats.setFixedWidth(180)
-        for name in CATEGORY_ORDER:
+        for name in self._shown_cats:
             QListWidgetItem(name, self.cats)
         self.cats.currentRowChanged.connect(self._on_cat)
         body.addWidget(self.cats)
@@ -661,19 +703,19 @@ class ActionPicker(QDialog):
         # Select initial category and pre-populate if needed
         matched = False
         if isinstance(current_code, dict) and "gun" in current_code:
-            self.cats.setCurrentRow(CATEGORY_ORDER.index("Gun"))
+            self.cats.setCurrentRow(self._cat_row("Recoil Control"))
             self.gun_editor.set_current(current_code)
             matched = True
         elif isinstance(current_code, dict) and "macro" in current_code:
-            self.cats.setCurrentRow(CATEGORY_ORDER.index("Macro"))
+            self.cats.setCurrentRow(self._cat_row("Macro"))
             self.macro_editor.set_current(current_code)
             matched = True
         elif isinstance(current_code, (tuple, list)) and len(current_code) >= 3 and current_code[0] == 0x15 and tuple(current_code[:3]) not in _NAMED_BY_CODE:
-            self.cats.setCurrentRow(CATEGORY_ORDER.index("Key Combination"))
+            self.cats.setCurrentRow(self._cat_row("Shortcut"))
             self.combo_editor.set_current(current_code)
             matched = True
-        elif isinstance(current_code, (tuple, list)) and len(current_code) >= 3 and current_code[0] == 0x0A and tuple(current_code[:3]) not in _NAMED_BY_CODE:
-            self.cats.setCurrentRow(CATEGORY_ORDER.index("Fire Key"))
+        elif isinstance(current_code, (tuple, list)) and len(current_code) >= 3 and current_code[0] == 0x0A:
+            self.cats.setCurrentRow(self._cat_row("Fire Click"))
             self.fire_editor.interval.setValue(current_code[1])
             self.fire_editor.count.setValue(current_code[2])
             matched = True
@@ -682,7 +724,7 @@ class ActionPicker(QDialog):
             for cat_name, items in ACTION_TREE.items():
                 for idx, (label, code) in enumerate(items):
                     if tuple(code) == target:
-                        self.cats.setCurrentRow(CATEGORY_ORDER.index(cat_name))
+                        self.cats.setCurrentRow(self._cat_row(cat_name))
                         self.list_pane.setCurrentRow(idx)
                         matched = True
                         break
@@ -723,11 +765,19 @@ class ActionPicker(QDialog):
             self.preview.setStyleSheet(f"color: {theme.WARN};")
             self.ok_btn.setEnabled(False)
 
+    def _cat_row(self, name):
+        """Visible row for a category (0 when it is hidden)."""
+        try:
+            return self._shown_cats.index(name)
+        except ValueError:
+            return 0
+
     def _on_cat(self, row):
-        name = CATEGORY_ORDER[row]
+        if not 0 <= row < len(self._shown_cats):
+            return
+        name = self._shown_cats[row]
         if name in CUSTOM_CATEGORIES:
-            idx = {"Key Combination": 1, "Fire Key": 2, "Macro": 3, "Gun": 4}[name]
-            self.stack.setCurrentIndex(idx)
+            self.stack.setCurrentIndex(EDITOR_PANE[name])
         else:
             self.list_pane.clear()
             for label, code in ACTION_TREE[name]:
@@ -766,8 +816,10 @@ class ActionPicker(QDialog):
         return self._result
 
 
-def pick_action(current_code=None, parent=None, phys=None, macros=None, guns=None):
-    dlg = ActionPicker(current_code, parent, phys=phys, macros=macros, guns=guns)
+def pick_action(current_code=None, parent=None, phys=None, macros=None, guns=None,
+                developer=False):
+    dlg = ActionPicker(current_code, parent, phys=phys, macros=macros, guns=guns,
+                       developer=developer)
     if dlg.exec() == QDialog.Accepted:
         return dlg.result_code()
     return None

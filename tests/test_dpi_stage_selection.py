@@ -3,13 +3,16 @@
 The wired firmware numbers DPI stages only among the enabled ones (a prefix
 count), while the panel always shows eight fixed rows.  Clicking a stage or
 receiving a device push must map between the two numbering schemes without the
-highlight jumping to a disabled row.
+highlight jumping to a disabled row.  The same file covers the typed DPI value
+box, which must accept digits only and stay in step with the slider.
 """
 
 import pytest
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from app.panels import dpi_panel as dpi_mod
@@ -124,3 +127,67 @@ def test_out_of_range_push_clamps_to_last_enabled_stage(qapp):
     panel = _panel(enabled=3)
     panel.set_active_stage(99)
     assert _active_rows(panel) == [2]
+
+
+# ---- Typed DPI entry -------------------------------------------------------
+# The slider is fiddly for an exact value, so the readout is a spin box that
+# accepts digits only and snaps to the firmware's 100-DPI step on commit.
+
+def _type_into(box, text, commit=True):
+    box.setFocus()
+    box.selectAll()
+    QTest.keyClicks(box, text)
+    if commit:
+        QTest.keyClick(box, Qt.Key_Return)
+
+
+def test_typing_a_value_moves_the_slider(qapp):
+    panel = _panel()
+    row = panel.rows[0]
+    _type_into(row.value, "5555")
+
+    assert row.value.value() == 5600              # snapped to the 100 step
+    assert row.slider.value() == 5600
+    assert row.dpi() == 5600
+
+
+def test_typed_value_is_what_gets_applied(qapp):
+    panel = _panel()
+    panel._apply_timer.stop()
+    row = panel.rows[1]
+    _type_into(row.value, "1275")
+    assert row.value.value() == 1300
+
+    applied = []
+    panel.apply_requested.connect(lambda *a: applied.append(a))
+    panel._emit_apply()
+
+    dpis, _colors, _selected = applied[0]
+    assert dpis[1] == 1300
+
+
+def test_letters_cannot_replace_a_dpi_value(qapp):
+    panel = _panel()
+    row = panel.rows[0]
+    before = (row.value.value(), row.slider.value())
+
+    _type_into(row.value, "abc")
+
+    assert (row.value.value(), row.slider.value()) == before
+
+
+def test_half_typed_value_waits_for_commit(qapp):
+    """keyboardTracking is off: partial digits must not reach the mouse."""
+    panel = _panel()
+    row = panel.rows[0]
+    before = row.value.value()
+    _type_into(row.value, "777", commit=False)
+
+    assert row.value.value() == before
+
+
+def test_slider_keeps_the_value_box_in_sync(qapp):
+    panel = _panel()
+    row = panel.rows[0]
+    row.slider.setValue(4321)
+    assert row.value.value() == 4300

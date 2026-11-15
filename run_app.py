@@ -81,9 +81,17 @@ def main():
     demo = "--demo" in sys.argv
     log.info("SM809 Wired Studio starting (demo=%s)", demo)
     log.info("python %s | %s", platform.python_version(), platform.platform())
-    from app.paths import app_dir, config_dir
+    from app.paths import (app_dir, config_dir, data_dir,
+                           migrate_legacy_config)
+    # One-time upgrade: libraries from builds that kept config/ beside the app
+    # move into data/config.  A data folder deleted by the user is NOT
+    # repopulated from the old folder -- that is the factory reset.
+    migrated = migrate_legacy_config()
     log.info("app dir: %s", app_dir())
+    log.info("data dir: %s", data_dir())
     log.info("profile config: %s", config_dir())
+    if migrated:
+        log.info("migrated the old config library to %s", migrated)
     if log_path:
         log.info("diagnostics: %s", log_path)
 

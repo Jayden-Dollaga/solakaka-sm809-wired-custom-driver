@@ -2,10 +2,10 @@
 
 The studio keeps the same public API it always used (``all/get/add/...``), but
 the source of truth is now :class:`wired.model.DataStore`: ``profile.bin`` holds
-up to 14 complete wired profiles. A small sidecar JSON (``config/profiles.json``)
-adds what the wired format has no room for -- stable UI ids, auto-switch match
-rules, creation order and app settings -- so the UI keeps working across
-restarts and profile reordering.
+up to 14 complete wired profiles. A small sidecar JSON
+(``data/config/profiles.json``) adds what the wired format has no room for --
+stable UI ids, auto-switch match rules, creation order and app settings -- so
+the UI keeps working across restarts and profile reordering.
 
 Conversions between the wired ``Profile`` record and the studio config dict
 (buttons, DPI, lighting, pointer) live in :mod:`wired.bridge`.
@@ -62,6 +62,12 @@ class ProfileStore:
         self._active = None
         self._settings: dict = {}
         self._seq = 0
+        # Per-index cache of the portable JSON mirror's full config.  Settings,
+        # rule and order writes used to rebuild every profile's button/DPI/
+        # lighting config for a file that had not changed; with 14 profiles
+        # that is the bulk of the write.  Cleared whenever the binary table or
+        # the slot order changes.
+        self._mirror_configs: dict[int, dict] = {}
         # Generation counter for deferred edits: set_config(persist=False)
         # bumps it; save_profiles() records the generation it wrote. A worker
         # apply that persisted an older snapshot therefore does not hide a
@@ -72,6 +78,7 @@ class ProfileStore:
 
     # -- persistence ----------------------------------------------------------
     def load(self):
+        self._mirror_configs.clear()
         side = {}
         try:
             with open(self.path, "r", encoding="utf-8") as f:
@@ -133,7 +140,7 @@ class ProfileStore:
         try:
             os.makedirs(os.path.dirname(self.path), exist_ok=True)
             # The binary profile table is authoritative for the mouse, but
-            # config/profiles.json is also a human-readable, portable mirror:
+            # data/config/profiles.json is also a human-readable, portable mirror:
             # every profile carries its full config so the file can be read,
             # diffed or copied even without profile.bin.
             profiles = []
@@ -145,20 +152,32 @@ class ProfileStore:
                     "created": meta.get("created"),
                 }
                 if i < len(self.data.profiles):
-                    try:
-                        entry["config"] = self._config(i, meta["id"])
-                    except Exception:
-                        pass
+                    config = self._mirror_configs.get(i)
+                    if config is None:
+                        try:
+                            config = self._config(i, meta["id"])
+                            self._mirror_configs[i] = config
+                        except Exception:
+                            config = None
+                    if config is not None:
+                        entry["config"] = config
                 profiles.append(entry)
-            with open(self.path, "w", encoding="utf-8") as f:
-                json.dump({"active": self._active, "profiles": profiles,
-                           "settings": self._settings}, f, indent=2)
+            payload = {"active": self._active, "profiles": profiles,
+                       "settings": self._settings}
+            # Write beside the target and replace it, so a crash mid-write
+            # cannot leave a truncated sidecar that loses every profile id and
+            # auto-switch rule on the next start.
+            tmp = self.path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+            os.replace(tmp, self.path)
         except Exception:
             pass
 
     def save_profiles(self):
         """Write the full binary profile table (all slots, ~1.65 MB)."""
         self.data.save_profiles()
+        self._mirror_configs.clear()
         # The table now contains every in-memory edit.
         self._saved_gen = self._edit_gen
 
@@ -181,13 +200,21 @@ class ProfileStore:
         return self._settings.get(key, default)
 
     def set_setting(self, key, value):
+        if key in self._settings and self._settings[key] == value:
+            return          # unchanged -> no sidecar write
         self._settings[key] = value
         self.save()
 
     def set_settings(self, values):
         """Update several settings and write the sidecar once (dialog accept)."""
-        self._settings.update(values or {})
-        self.save()
+        changed = False
+        for key, value in (values or {}).items():
+            if key in self._settings and self._settings[key] == value:
+                continue
+            self._settings[key] = value
+            changed = True
+        if changed:
+            self.save()
 
     # -- helpers --------------------------------------------------------------
     def _index(self, pid):
@@ -340,10 +367,19 @@ class ProfileStore:
     def unique_name(self, name, exclude_id=None):
         return self._disambiguate(name, exclude_id)
 
+    def next_default_name(self):
+        """Positional default name for the next profile.
+
+        The number follows the profile count, not the names: with the factory
+        default plus custom names (four through eight, say), the next profile
+        is ``Profile 9``.  Renaming a profile never moves the counter back.
+        """
+        return f"Profile {len(self.data.profiles) + 1}"
+
     def add(self, name=None, config=None, match_rules=None):
         if self.at_limit():
             raise ValueError(f"the wired SM809 stores at most {PROFILE_LIMIT} profiles")
-        name = self._disambiguate(name or "New Profile")
+        name = self._disambiguate(name or self.next_default_name())
         self.data.add_profile(name)
         idx = len(self.data.profiles) - 1
         self._write_config(self.data.profiles[idx], config or default_config())
@@ -388,6 +424,7 @@ class ProfileStore:
             return
         self.data.reorder_profiles(order)
         self._meta = [self._meta[i] for i in order]
+        self._mirror_configs.clear()        # configs follow their slot index
         self.save()
 
     def sort_by(self, key):
@@ -409,6 +446,7 @@ class ProfileStore:
             return
         self.data.reorder_profiles(order)
         self._meta = [self._meta[i] for i in order]
+        self._mirror_configs.clear()
         self.save()
 
     def delete(self, pid):
@@ -419,6 +457,7 @@ class ProfileStore:
             raise ValueError("the last profile cannot be deleted")
         self.data.delete_profile(idx)
         self._meta.pop(idx)
+        self._mirror_configs.clear()
         if self._active == pid:
             self._active = self._meta[0]["id"] if self._meta else None
         self.save()
@@ -444,6 +483,7 @@ class ProfileStore:
             return
         prof = self.data.profiles[idx]
         self._write_config(prof, config)
+        self._mirror_configs.clear()
         self._edit_gen += 1
         if persist:
             self.save_profiles()
@@ -460,6 +500,7 @@ class ProfileStore:
         if idx < 0:
             return None
         self.data.reset_profile(idx)
+        self._mirror_configs.clear()
         self.save()
         return self._dict(idx)
 
@@ -473,6 +514,7 @@ class ProfileStore:
         prof = self.data.profiles[idx]
         if config is not None:
             self._write_config(prof, config)
+            self._mirror_configs.clear()
             # ``service.apply(persist=True)`` writes the whole table after the
             # frames go out, so saving here would write the same ~1.65 MB twice.
         self.data.selected = idx
@@ -496,6 +538,7 @@ class ProfileStore:
         if self.at_limit():
             raise ValueError(f"the wired SM809 stores at most {PROFILE_LIMIT} profiles")
         prof = self.data.import_profile(Path(path))
+        self._mirror_configs.clear()
         self._seq += 1
         self._meta.append({"id": uuid.uuid4().hex[:8], "name": prof.name,
                            "match_rules": [], "created": self._seq})

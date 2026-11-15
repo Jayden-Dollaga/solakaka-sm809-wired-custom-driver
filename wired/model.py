@@ -488,13 +488,6 @@ class Profile:
         return [ButtonEntry(self, i) for i in range(BUTTON_COUNT)]
 
 
-def wheel_reversed(profile: Profile) -> bool:
-    """True when both wheel pairs carry Down/Up instead of Up/Down."""
-    pairs = ((profile.button(up).action, profile.button(down).action)
-             for up, down in WHEEL_SLOT_PAIRS)
-    return all(up == WHEEL_ACTION_DOWN and down == WHEEL_ACTION_UP for up, down in pairs)
-
-
 def set_wheel_reversed(profile: Profile, reversed_: bool) -> None:
     """Flip the physical wheel direction by swapping the two wheel actions.
 

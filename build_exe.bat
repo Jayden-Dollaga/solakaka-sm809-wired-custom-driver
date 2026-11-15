@@ -6,7 +6,9 @@ REM   build\SM809WiredStudio   PyInstaller work files
 REM   dist                     previous exe plus its runtime data\config\logs
 REM   data                     device tables copied from seed at first launch
 REM A new data\ is recreated from seed on the next launch, so the exe starts
-REM with the one factory "Profile". Your source config\ library is NOT touched.
+REM with the one factory "Profile" and no saved host settings -- the profile,
+REM macro and recoil libraries and every app setting live in data\config too.
+REM A legacy pre-upgrade config\ folder beside the source is NOT touched.
 REM Output: dist\SM809WiredStudio.exe
 REM Requires PyInstaller in .venv (or on PATH), plus PySide6 + hidapi.
 

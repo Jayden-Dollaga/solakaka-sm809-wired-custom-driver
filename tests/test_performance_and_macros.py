@@ -54,12 +54,12 @@ def test_performance_ranges_match_official_page(qapp):
     panel.key_response.setValue(12)
     assert wait_for(qapp, lambda: seen)
     assert seen[-1] == 12
-    assert panel.key_response_value.text() == "12 ms"
+    assert panel.key_response_value.text() == "12"
 
     # loading a profile refreshes the widget without emitting an edit
     panel.set_state(key_response=7, pointer={
         "speed": 8, "scroll": 5, "double": 2,
-        "enhance": True, "onepage": True, "wheel_reverse": True,
+        "enhance": True, "onepage": True,
     })
     assert panel.key_response.value() == 7
     assert panel.scroll_lines.value() == 5

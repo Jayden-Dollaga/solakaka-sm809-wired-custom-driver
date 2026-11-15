@@ -6,6 +6,10 @@ Matches MSDriver.dll's behaviour:
   * feature reports are 9 bytes: report ID 0 + 8-byte packet
   * bulk blocks are 33 bytes: report ID 0 + 32-byte payload
   * input reports start with report ID 6: [6, eventHi, eventLo, value]
+
+The vendor updater's ISP bootloader is a different device: VID 04D9 /
+PID 8022 on Usage Page 0xFF00 with 64-byte reports.  It is detected by name
+but never opened; the application firmware's protocol does not exist there.
 """
 
 from __future__ import annotations
@@ -45,6 +49,13 @@ INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 ERROR_IO_PENDING = 997
 WAIT_OBJECT_0 = 0
 WAIT_TIMEOUT = 258
+
+# The vendor updater re-enumerates the mouse as its ISP bootloader.  The USB
+# descriptor block inside data.bin (offset 0x010A) declares VID 04D9 /
+# PID 8022 with Usage Page 0xFF00 and 64-byte input/output reports.  A powered
+# mouse in that state is reachable but cannot answer the profile protocol, so
+# reporting "not found" hides what actually happened.
+BOOTLOADER_PID = 0x8022
 
 
 class SP_DEVICE_INTERFACE_DATA(ctypes.Structure):
@@ -392,6 +403,23 @@ class HidTransport:
         except Exception:
             return []
 
+    def bootloader_present(self) -> bool:
+        """True when the mouse sits in the vendor's ISP bootloader.
+
+        The updater's bootloader (decoded from the update package's own USB
+        descriptors) reports the same vendor ID with PID ``0x8022``.  It is a
+        different device: the application firmware's profile protocol does not
+        exist until that image has been flashed and the cable replugged.
+        """
+        if self.demo or self.lib is None:
+            return False
+        try:
+            return any(e.vendor_id == self.config.vid
+                       and e.product_id == BOOTLOADER_PID
+                       for e in self.lib.enumerate())
+        except Exception:
+            return False
+
     def open(self) -> bool:
         if self.demo:
             self.sent_packets.clear()
@@ -591,8 +619,19 @@ def describe_interfaces(config) -> str:
         return f"HID library unavailable: {exc}"
     lines = [f"VID {config.vid:04X}  PID {config.pid:04X}"]
     found = False
+    bootloader = False
     for entry in lib.enumerate():
-        if entry.vendor_id != config.vid or entry.product_id != config.pid:
+        if entry.vendor_id != config.vid:
+            continue
+        if entry.product_id == BOOTLOADER_PID:
+            bootloader = True
+            lines.append(
+                f"bootloader PID {BOOTLOADER_PID:04X}  "
+                f"usage {entry.usage_page:04X}/{entry.usage:04X}  "
+                f"in={entry.input_length} out={entry.output_length}"
+            )
+            continue
+        if entry.product_id != config.pid:
             continue
         found = True
         lines.append(
@@ -600,6 +639,10 @@ def describe_interfaces(config) -> str:
             f"in={entry.input_length} out={entry.output_length} feat={entry.feature_length}"
             + (f"  {entry.product}" if entry.product else "")
         )
-    if not found:
+    if bootloader and not found:
+        lines.append(
+            "Mouse is in firmware-update mode (PID 8022). Replug it or "
+            "finish the vendor firmware update before using this app.")
+    elif not found:
         lines.append("No matching HID interfaces present.")
     return "\n".join(lines)

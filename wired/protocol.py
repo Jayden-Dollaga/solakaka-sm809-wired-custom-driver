@@ -351,16 +351,16 @@ def table_budget_messages(macros: int, guns: int) -> list[str]:
             f"{macros - MACRO_TABLE_LIMIT} will not work.")
     if guns > GUN_TABLE_LIMIT:
         out.append(
-            f"{guns} gun/left-macro buttons are bound, but the firmware runs "
+            f"{guns} recoil / left-macro buttons are bound, but the firmware runs "
             f"at most {GUN_TABLE_LIMIT} per profile; the last "
             f"{guns - GUN_TABLE_LIMIT} will not work.")
     total = macros + guns
     if total > MACRO_TABLE_MAX_INDEX:
         out.append(
-            f"{total} macro/gun tables are bound, but only "
+            f"{total} macro / recoil tables are bound, but only "
             f"{MACRO_TABLE_MAX_INDEX} can be uploaded; the last "
             f"{total - MACRO_TABLE_MAX_INDEX} will not work. Remove a macro "
-            f"or gun binding in this profile.")
+            f"or recoil binding in this profile.")
     return out
 
 
@@ -510,7 +510,7 @@ def gun_fits(rows) -> tuple[bool, str]:
     """Check a recoil pattern against the device's 128-byte table limit."""
     rows = list(rows or ())[:MAX_BULLETS]
     if not rows:
-        return False, "a gun pattern needs at least one bullet row"
+        return False, "a recoil pattern needs at least one bullet row"
     size = gun_encoded_size(rows)
     if size > 128:
         return False, (f"this pattern needs {size} bytes; the device table "
@@ -519,11 +519,13 @@ def gun_fits(rows) -> tuple[bool, str]:
 
 
 def build_gun_block(entry: ButtonEntry, ordinal: int = 1) -> bytes:
-    """Encode the 30-row recoil table.
+    """Encode the 30-row recoil table for profile parity.
 
-    The original builds this block but never copies it into the upload buffer
-    (the Gun tab is hidden in the shipped build), so this layout is inferred
-    from the encoder and is marked experimental.
+    The vendor builds this block but never copies it into the upload buffer
+    (the Gun tab is hidden in the shipped build); the wired firmware therefore
+    never executes it.  The studio still stores the table so profiles keep
+    their shape, while host playback runs the pattern on the PC.  The layout
+    itself is inferred from the vendor encoder.
     """
     block = bytearray(128)
     loop = entry.loop & 0xFFFF

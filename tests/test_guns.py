@@ -161,7 +161,7 @@ def test_gun_binding_round_trips_through_a_profile():
     assert binding["name"] == "AK"
     assert binding["rows"] == rows
     assert binding["repeat"] == 2
-    assert describe_binding(binding) == "Gun: AK (x2)"
+    assert describe_binding(binding) == "Recoil: AK (x2)"
 
     # the studio preview reads the same binding back out of the profile
     again = profile_to_config(prof, "prof")
@@ -286,3 +286,101 @@ def test_gun_panel_recording_stops_at_the_byte_budget(qapp, tmp_path):
     assert len(rows) == 15                # 15 offset rows fit in 128 bytes
     assert not panel._recording
     assert "128" in panel.record_status.text()
+
+
+def test_gun_panel_host_playback_follows_the_selected_pattern(qapp, tmp_path):
+    """The PC player mirrors the editor and persists the opt-in controls."""
+    from app.gun_store import GunStore
+    from app.panels.gun_panel import GunPanel
+    from app.recoil_player import DEFAULT_TRIGGER
+
+    store = GunStore(path=str(tmp_path / "guns.json"))
+    g = store.add("AK")
+    store.set_rows(g["id"], [[5, 5, 20], [5, 5, 20]])
+    saved = {}
+    panel = GunPanel(store,
+                     lambda key, default=None: saved.get(key, default),
+                     lambda key, value: saved.__setitem__(key, value))
+    # Never poll the real mouse or inject input from a GUI test.
+    panel.player._is_down = lambda _vk: False
+    panel.player._send = lambda _x, _y: None
+    panel.gun_list.setCurrentRow(0)
+    try:
+        assert not panel.host_enable.isChecked()
+        assert panel.player.trigger == DEFAULT_TRIGGER
+        assert panel.player.rows == [[5, 5, 20], [5, 5, 20]]
+        assert "Off" in panel.host_status.text()
+
+        panel.host_enable.setChecked(True)
+        assert saved["recoil_host_enabled"] is True
+        assert panel.player.enabled
+        assert "Listening" in panel.host_status.text()
+        assert "Side 1" in panel.host_status.text()
+
+        panel.host_trigger.setCurrentIndex(panel.host_trigger.findData(0x02))
+        assert saved["recoil_host_trigger"] == 0x02
+        assert panel.player.trigger == 0x02
+        assert "Right" in panel.host_status.text()
+
+        # A row edit reaches the player without restarting a held pattern.
+        panel.table.cellWidget(0, 1).setValue(9)
+        assert panel.player.rows[0][0] == 9
+        assert panel.player.enabled
+
+        # Switching patterns retargets the player.
+        other = store.add("SMG")
+        store.set_rows(other["id"], [[2, 3, 10]])
+        panel._refresh_list()
+        panel.gun_list.setCurrentRow(store.index_of(other["id"]))
+        assert panel.player.rows == [[2, 3, 10]]
+    finally:
+        panel.host_enable.setChecked(False)
+        panel.close()
+
+
+def test_gun_panel_restores_host_playback_settings(qapp, tmp_path):
+    from app.gun_store import GunStore
+    from app.panels.gun_panel import GunPanel
+
+    store = GunStore(path=str(tmp_path / "guns.json"))
+    g = store.add("AK")
+    store.set_rows(g["id"], [[4, 0, 10]])
+    settings = {"recoil_host_enabled": True, "recoil_host_trigger": 0x04}
+    panel = GunPanel(store,
+                     lambda key, default=None: settings.get(key, default),
+                     lambda key, value: settings.__setitem__(key, value))
+    panel.player._is_down = lambda _vk: False
+    panel.player._send = lambda _x, _y: None
+    panel.gun_list.setCurrentRow(0)
+    try:
+        assert panel.host_enable.isChecked()
+        assert panel.host_trigger.currentData() == 0x04
+        assert panel.player.trigger == 0x04
+        assert panel.player.enabled
+        assert panel.player.rows == [[4, 0, 10]]
+        assert "Middle" in panel.host_status.text()
+    finally:
+        panel.host_enable.setChecked(False)
+        panel.close()
+
+
+def test_playback_status_tracks_engine_activity(qapp, tmp_path):
+    from app.gun_store import GunStore
+    from app.panels.gun_panel import GunPanel
+
+    store = GunStore(path=str(tmp_path / "guns.json"))
+    g = store.add("AK")
+    store.set_rows(g["id"], [[4, 0, 100]])
+    panel = GunPanel(store)
+    panel.player._is_down = lambda _vk: False
+    panel.player._send = lambda _x, _y: None
+    panel.gun_list.setCurrentRow(0)
+    panel.host_enable.setChecked(True)
+    try:
+        panel.player._start()
+        assert "Playing" in panel.host_status.text()
+        panel.player._stop()
+        assert "Playing" not in panel.host_status.text()
+    finally:
+        panel.host_enable.setChecked(False)
+        panel.close()

@@ -28,7 +28,6 @@ from .model import (
     colorref_to_rgb,
     rgb_to_colorref,
     set_wheel_reversed,
-    wheel_reversed,
 )
 from .protocol import (
     ACTION_INFO_MAP,
@@ -286,7 +285,7 @@ def binding_from_entry(entry, slot: int, profile_id: str = "",
             "repeat": loop,
         }
     if action == 0x79 and int(entry.count):
-        name = (entry.name or "").strip() or f"Gun {slot + 1}"
+        name = (entry.name or "").strip() or f"Recoil {slot + 1}"
         gid = f"dev:{profile_id}:{slot}" if profile_id else f"dev:{slot}"
         return {
             "gun": gid,
@@ -382,7 +381,7 @@ def validate_binding(binding) -> str:
         if "gun" in binding:
             rows = binding.get("rows")
             if rows is None:
-                return "the gun pattern data is missing"
+                return "the recoil pattern data is missing"
             return gun_binding_problem(rows)
         if "macro" in binding:
             events = binding.get("events")
@@ -436,7 +435,6 @@ def default_pointer(profile: Profile) -> dict:
         "double": int(profile.double),
         "enhance": bool(profile.enhance),
         "onepage": bool(profile.onepage),
-        "wheel_reverse": wheel_reversed(profile),
     }
 
 
@@ -545,8 +543,11 @@ def config_to_profile(profile: Profile, config: dict,
         binding = bindings[slot] if slot < len(bindings) else (0x00, 0, 0)
         binding_to_entry(profile.button(slot), binding, macro_events, gun_rows)
 
-    reverse = bool((config.get("pointer") or {}).get("wheel_reverse", False))
-    set_wheel_reversed(profile, reverse)
+    # The wheel always keeps the Windows-default direction.  Older builds (and
+    # some imported vendor records) could carry swapped Scroll Up/Down actions
+    # as a workaround for a reversed encoder; normalize them here so applying a
+    # profile -- including an auto-switch override -- can never flip scrolling.
+    set_wheel_reversed(profile, False)
     return profile
 
 
@@ -556,9 +557,9 @@ def describe_binding(binding) -> str:
             import os
             return f"Run App: {os.path.basename(binding.get('runapp') or '')}"
         if "gun" in binding:
-            name = binding.get("name") or "Gun"
+            name = binding.get("name") or "Recoil"
             rep = max(1, min(3, int(binding.get("repeat", 1) or 1)))
-            return f"Gun: {name} (x{rep})"
+            return f"Recoil: {name} (x{rep})"
         name = binding.get("name") or "Macro"
         pm = int(binding.get("playmode", 1))
         rep = int(binding.get("repeat", 0))

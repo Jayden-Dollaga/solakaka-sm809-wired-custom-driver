@@ -38,7 +38,7 @@ class ProfilesPanel(QWidget):
     delete_requested = Signal()
     import_requested = Signal()
     export_requested = Signal()
-    manage_apps_requested = Signal(str)     # profile id -> open Auto-Switch
+    manage_apps_requested = Signal(str)     # profile id -> open Manage Apps
 
     def __init__(self):
         super().__init__()
@@ -57,6 +57,7 @@ class ProfilesPanel(QWidget):
                      "mouse stores up to 14 profiles.")
         sub.setProperty("panelSubtitle", "true")
         sub.setWordWrap(True)
+        self.subtitle = sub
         lay.addWidget(sub)
 
         self.search = QLineEdit()
@@ -106,7 +107,7 @@ class ProfilesPanel(QWidget):
         apps_row.addWidget(self.apps_hint, 1)
         self.manage_apps_btn = QPushButton("Manage apps…")
         self.manage_apps_btn.setToolTip(
-            "Open Auto-Switch with this profile selected")
+            "Open Manage Apps with this profile selected")
         self.manage_apps_btn.clicked.connect(self._on_manage_apps)
         apps_row.addWidget(self.manage_apps_btn)
         lay.addLayout(apps_row)
@@ -120,15 +121,26 @@ class ProfilesPanel(QWidget):
             b = QPushButton(label)
             b.clicked.connect(sig)
             btns.addWidget(b)
+        # Qt's drag reorder needs an OLE drop target, which an elevated window
+        # cannot have (see app.win_drop); these buttons keep the order usable.
+        self.up_btn = QPushButton("Move up")
+        self.up_btn.setToolTip("Move the selected profile one place earlier "
+                               "(auto-switch checks profiles top to bottom)")
+        self.up_btn.clicked.connect(lambda: self.move_selected(-1))
+        self.down_btn = QPushButton("Move down")
+        self.down_btn.setToolTip("Move the selected profile one place later")
+        self.down_btn.clicked.connect(lambda: self.move_selected(1))
+        btns.addWidget(self.up_btn)
+        btns.addWidget(self.down_btn)
         btns.addStretch(1)
         lay.addLayout(btns)
 
         io_btns = QHBoxLayout()
         for label, sig, tip in (
-                ("Import profile…", self.import_requested,
-                 "Import a .pbin exported from the official SM809 driver "
-                 "(profile menu (…) → Export), another wired .bin, or a "
-                 "wireless-Pro .psf export."),
+                ("Import files…", self.import_requested,
+                 "Import one or more .pbin / .bin / .psf profiles or .mbin "
+                 "macros. You can also drag supported files anywhere onto "
+                 "the window."),
                 ("Export .pbin…", self.export_requested,
                  "Save this profile as a .pbin. The official driver can load "
                  "it with its profile menu (…) → Import.")):
@@ -142,7 +154,10 @@ class ProfilesPanel(QWidget):
 
         transfer = QLabel("The .pbin format is shared with the official driver: "
                           "export here, then use the driver's profile menu (…) → "
-                          "Import; export there, then use Import profile… here.")
+                          "Import; export there, then use Import files… here. "
+                          "Several files import at once, and dropping .pbin, "
+                          ".bin, .psf or .mbin files anywhere on the window "
+                          "imports them the same way.")
         transfer.setProperty("cardHint", "true")
         transfer.setWordWrap(True)
         lay.addWidget(transfer)
@@ -192,15 +207,47 @@ class ProfilesPanel(QWidget):
         self._loading = False
         self._apply_filter(self.search.text())
         self._update_apps_hint()
+        self._sync_move_buttons()
 
     def selected_id(self):
         """The id of the highlighted list row (the management target), or None."""
         it = self.list.currentItem()
         return it.data(Qt.UserRole) if it is not None else None
 
+    def show_active(self, pid):
+        """Mark `pid` as the profile running on the mouse and select its row.
+
+        Used by per-app auto-switch: opening a matched game must make this tab
+        follow the switch, not keep showing the manual profile. The row is moved
+        without emitting ``profile_selected`` (that would turn the switched
+        profile into a new manual base for when auto-switch is turned off).
+        """
+        if not pid:
+            return
+        base = self.list.font()
+        if base.pointSize() <= 0 and base.pixelSize() <= 0:
+            base = QApplication.font()
+        self._loading = True
+        try:
+            row = -1
+            for i in range(self.list.count()):
+                it = self.list.item(i)
+                f = QFont(base)
+                if it.data(Qt.UserRole) == pid:
+                    f.setWeight(QFont.DemiBold)
+                    row = i
+                it.setFont(f)
+            if row >= 0:
+                if self.list.currentRow() != row:
+                    self.list.setCurrentRow(row)
+                self.list.scrollToItem(self.list.item(row))
+        finally:
+            self._loading = False
+        self._update_apps_hint()
+
     def set_match_rules(self, pid, rules):
         """Update one profile's custom apps without rebuilding the whole list
-        (the Auto-Switch tab just edited them; keep this tab in step)."""
+        (the Manage Apps dialog just edited them; keep this tab in step)."""
         self._rules_by_pid[pid] = [dict(r) for r in rules]
         for i in range(self.list.count()):
             it = self.list.item(i)
@@ -246,11 +293,61 @@ class ProfilesPanel(QWidget):
         if self._loading:
             return
         self._update_apps_hint()
+        self._sync_move_buttons()
 
     def _on_manage_apps(self):
         pid = self.selected_id()
         if pid:
             self.manage_apps_requested.emit(pid)
+
+    def set_native_drop_mode(self, active):
+        """Adapt to the elevated Windows drop bridge (no in-window OLE drags).
+
+        When the app runs elevated Qt's drop target is revoked so Explorer can
+        deliver file drops; that also disables drag-to-reorder, so the Move up
+        / Move down buttons become the way to order profiles.
+        """
+        if active:
+            self.list.setDragDropMode(QAbstractItemView.NoDragDrop)
+            self.subtitle.setText(
+                "Order sets auto-switch priority (first matching profile wins). "
+                "This window runs as administrator, so reorder with Move up / "
+                "Move down. Double-click to activate. The wired mouse stores up "
+                "to 14 profiles.")
+        else:
+            self.list.setDragDropMode(QAbstractItemView.InternalMove)
+            self.subtitle.setText(
+                "Drag to reorder — order sets auto-switch priority (first "
+                "matching profile wins). Double-click to activate. The wired "
+                "mouse stores up to 14 profiles.")
+
+    def move_selected(self, delta):
+        """Move the highlighted profile one row (persists via order_changed)."""
+        row = self.list.currentRow()
+        target = row + int(delta)
+        if row < 0 or not 0 <= target < self.list.count():
+            return False
+        self._loading = True
+        try:
+            item = self.list.takeItem(row)
+            self.list.insertItem(target, item)
+            self.list.setCurrentRow(target)
+            self.list.scrollToItem(item)
+        finally:
+            self._loading = False
+        # a manual move implies a custom order, exactly like a drag
+        self.sort.blockSignals(True)
+        self.sort.setCurrentIndex(0)
+        self.sort.blockSignals(False)
+        self._sync_move_buttons()
+        self.order_changed.emit(self._ids_in_order())
+        return True
+
+    def _sync_move_buttons(self):
+        row = self.list.currentRow()
+        count = self.list.count()
+        self.up_btn.setEnabled(row > 0)
+        self.down_btn.setEnabled(0 <= row < count - 1)
 
     # -- internals ------------------------------------------------------------
     def _ids_in_order(self):
@@ -268,7 +365,8 @@ class ProfilesPanel(QWidget):
         if self.list.count() == 0:
             self.empty.setText(
                 "No profiles yet. Use New below to create one, or Import "
-                "profile… to bring in a .pbin from the official driver.")
+                "files… to bring in .pbin, .bin or .psf profiles. You can "
+                "also drag them onto the window.")
         elif visible == 0:
             self.empty.setText(
                 f"No profile matches “{text.strip()}”. Clear the search to "

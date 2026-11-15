@@ -48,7 +48,6 @@ POINTER_SCROLL = 3
 POINTER_DOUBLE = 5
 POINTER_ENHANCE = False
 POINTER_ONEPAGE = False
-WHEEL_REVERSED = False
 
 # Profile +0x138, shown on the official Performance page as 1-100 ms.
 KEY_RESPONSE = 4
@@ -94,7 +93,6 @@ def config():
             "double": POINTER_DOUBLE,
             "enhance": POINTER_ENHANCE,
             "onepage": POINTER_ONEPAGE,
-            "wheel_reverse": WHEEL_REVERSED,
         },
     }
 

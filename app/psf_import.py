@@ -393,7 +393,6 @@ def to_config(d, warnings=None):
             "double": D.POINTER_DOUBLE,
             "enhance": D.POINTER_ENHANCE,
             "onepage": D.POINTER_ONEPAGE,
-            "wheel_reverse": D.WHEEL_REVERSED,
         },
     }
 

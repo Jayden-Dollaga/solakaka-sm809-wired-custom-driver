@@ -3,13 +3,13 @@
 A complete desktop configuration studio for the **wired SOLAKAKA SM809** gaming
 mouse. It replaces the official configuration utility with a faster, fully local
 PySide6 interface and adds features the official wired build hides or lacks,
-including per-app profile switching and the recoil-pattern (Gun) editor.
+including per-app profile switching and the recoil-pattern editor.
 
 - **Device:** wired SOLAKAKA SM809 only (VID `0x04D9`, PID `0xA09F`).
 - **Platform:** Windows (HID, Raw Input and Windows pointer APIs).
-- **Data:** the app works on its own copy of the device data in `data/`. It never
-  reads or writes the original installation under
-  `C:\Program Files (x86)\SM809 mouse Software`.
+- **Data:** the app works on its own copy of the device data and of every saved
+  profile, macro, pattern and setting in `data/`. It never reads or writes the
+  original installation under `C:\Program Files (x86)\SM809 mouse Software`.
 
 The wireless SM809 Pro is a different mouse with a different protocol. Its
 battery, connection-mode, lift-off and sensor-flag controls do not exist on the
@@ -19,14 +19,13 @@ wired model and are not part of this app.
 
 | Area | What the studio does |
 | --- | --- |
-| Profiles | 14 full device profiles; quick switch, new/duplicate/rename/delete, drag-to-order, search, five sort modes, `.pbin` import/export, one-way `.psf` migration, JSON mirror |
-| Buttons | 64 firmware slots; Office and Game layers; all vendor actions (mouse, DPI, quick, shortcuts, fire, macro, gun, Windows, multimedia, browser); left/right modifier keys; Detect Key |
-| Macros | Named library; event editor with timing; text expansion; system-wide keyboard/mouse recorder; `.mbin` import/export (plain or protected); paste, clear, move, delete |
-| Gun | Named recoil-pattern library; 30-row table; Raw Input recorder; X/Y/delay editor; flip/clear; 128-byte budget; 1x/2x/3x binding |
-| DPI | Eight stages, 100-24,000 DPI; enable/skip stages; per-stage LED colour; active-stage click; live device feedback |
+| Profiles | 14 full device profiles; quick switch, new/duplicate/rename/delete, drag-to-order (Move up/down while elevated), search, five sort modes, `.pbin` import/export, one-way `.psf` migration, batch and drag-and-drop import, JSON mirror |
+| Buttons | 64 firmware slots; Office and Game layers; vendor action menu reproduced group for group (Basic, High order, Fire Click, Button Off, Shortcut, Macro, DPI, Report, Multimedia, Windows, Office, Advance Function) plus Recoil Control (developer preview); left/right modifier keys; Detect Key |
+| Macros | Named library; event editor with timing; text expansion; system-wide keyboard/mouse recorder; `.mbin` import/export (plain or protected), single or batch/drag-and-drop; paste, clear, move, delete |
+| Recoil Control (developer preview) | Hidden until **Settings… → Developer** is enabled. Named recoil-pattern library; 30-row table; Raw Input recorder; X/Y/delay editor; flip/clear; 128-byte budget; 1x/2x/3x profile binding; PC-side host playback (wired firmware cannot run recoil tables) |
 | Lighting | Twelve vendor effects; only the controls each effect uses; Fix/Loop colour; eight-colour palette; clamping; debounced complete LED writes |
-| Performance | Polling 125/250/500/1000 Hz; Windows pointer speed, scroll speed, double-click, acceleration, page scroll; key response; per-device wheel direction fix |
-| Auto-switch | Per-profile app rules (exe, path, title); running-window picker; 3-second detect; browse for an exe; priority ordering; debounced, non-redundant switching; elevated-game fallback |
+| Performance | Polling 125/250/500/1000 Hz; Windows pointer speed, scroll speed, double-click, acceleration, page scroll; key response; normal Windows wheel direction; DPI stages (eight, 100-24,000 DPI, per-stage colour and active-stage click) on the same page |
+| Auto-switch | Per-profile app rules (exe, path, title); running-window picker; 3-second detect; browse for an exe; priority ordering; debounced, non-redundant switching; elevated-game fallback. Configured in the **Manage Apps** popup from **Profiles → Manage apps…** |
 | Shell | Always-local PySide6 UI; auto or manual apply; live closable log; system tray; start with Windows; single instance; splash; window geometry restore |
 | Overlay | Click-through HUD for profile, DPI and polling changes; nine anchors; monitor follow/pin; opacity, size and hold time |
 | Diagnostics | DEBUG log file with rotation; repeat collapsing; GUI log stream; structured apply/device/error records; crash hooks |
@@ -42,11 +41,11 @@ wired model and are not part of this app.
 - [Profiles](#profiles)
 - [Button assignment](#button-assignment)
 - [Macro library](#macro-library)
-- [Gun (recoil) patterns](#gun-recoil-patterns)
+- [Recoil Control patterns](#recoil-control-patterns)
 - [DPI stages](#dpi-stages)
 - [Lighting](#lighting)
 - [Performance and pointer](#performance-and-pointer)
-- [Per-app auto-switching](#per-app-auto-switching)
+- [Per-app auto-switching (Manage Apps)](#per-app-auto-switching)
 - [On-screen overlay and tray](#on-screen-overlay-and-tray)
 - [Hardware and firmware notes](#hardware-and-firmware-notes)
 - [Files and formats](#files-and-formats)
@@ -94,14 +93,25 @@ with Windows** registers.
 
 On first launch the studio creates `data/` and copies the initial device data
 from `seed/`. The seed contains exactly one factory-default profile named
-**Profile** (built from `Default.pbin`); the vendor installer's sample profile
-library is never shipped. Delete `data/` to start again from the seed; `config/`
-holds your profile, macro and gun libraries and is not recreated.
+**Profile 1**, byte-identical to `Default.pbin` — the file a clean vendor
+install writes and the template **Reset to Factory** restores. The vendor
+installer's sample profile library is never shipped.
+
+Everything you edit lives inside `data/`: the device tables and the host
+libraries and app settings in `data/config/`. Delete the whole `data/` folder
+to return to factory defaults — profiles, macros, recoil patterns and every
+saved setting are gone, and the next launch recreates the seed. Only `logs/`
+and the Windows autostart entry live outside `data/`, so they are not part of
+the reset.
+
+When upgrading from a build that kept `config/` beside the app, that folder is
+copied into `data/config/` once. The old folder is left untouched as a manual
+backup and is never read again; if `data/` was missing at launch, it is treated
+as a deliberate reset and the old library is not imported.
 
 Set `SM809_DATA_DIR` to use a different data folder. The host-side
-`config/profiles.json`, `config/macros.json` and `config/guns.json` are created
-inside that folder too, so a scratch or second portable copy never writes into
-the main one.
+`profiles.json`, `macros.json` and `guns.json` live in its `config/` subfolder
+too, so a scratch or second portable copy never writes into the main one.
 
 ## Command-line and environment reference
 
@@ -117,7 +127,7 @@ the main one.
 
 | Variable | Effect |
 | --- | --- |
-| `SM809_DATA_DIR` | Use this folder for both `data/` (device tables) and `config/` (host libraries). Ideal for tests, demos and a second portable copy. |
+| `SM809_DATA_DIR` | Use this folder for both the device tables and the host libraries (`<folder>/config`). Ideal for tests, demos and a second portable copy. |
 | `SM809_ELEVATION_TRIED=1` | Internal loop guard: set before an elevated relaunch so a declined UAC prompt cannot relaunch forever. |
 
 The application also creates and uses:
@@ -130,9 +140,9 @@ The application also creates and uses:
 
 Like the official SM809 driver, the studio asks for administrator rights so it
 can read the foreground window of games that run elevated. Windows does not let
-a normal process inspect an elevated one, so without this the auto-switch
-watcher cannot see anti-cheat or other admin-only titles and those apps would
-never trigger a profile.
+a medium-integrity process read the window title or image path of an elevated
+process; an elevated game can still be recognized by exe name through a process
+snapshot, but path- and title-qualified rules need the elevation.
 
 - **Packaged exe:** `SM809WiredStudio.spec` embeds a `requireAdministrator`
   manifest (`uac_admin=True`), so Windows shows the consent prompt every time
@@ -142,11 +152,22 @@ never trigger a profile.
   the UAC prompt to continue with full detection.
 - If you decline the prompt, the studio asks whether to continue without
   administrator rights. Continuing works for most apps, but elevated games are
-  not detected; the Auto-Switch page shows an orange reminder in that state.
+  not detected; the **Manage Apps** popup shows an orange reminder in that state.
 - `--demo` never relaunches from source, and `--no-elevate` skips the relaunch on
   purpose. (The packaged exe always elevates through its manifest, even in demo
   mode.) A `SM809_ELEVATION_TRIED=1` environment sentinel prevents a relaunch
   loop if UAC is dismissed.
+- **Drag-and-drop still works when elevated.** Windows' UIPI refuses an OLE
+  drag from a normal Explorer into an elevated window, which is why Qt's drop
+  target never fires there. The studio therefore revokes Qt's OLE target after
+  showing and accepts the legacy `WM_DROPFILES` message instead
+  (`app/win_drop.py`: `DragAcceptFiles` plus
+  `ChangeWindowMessageFilterEx` for `WM_DROPFILES`, `WM_COPYDATA` and
+  `WM_COPYGLOBALDATA`). Dropped files take the same batch-import path as
+  **Import files…**, including drops on the **Manage Apps** popup. Because the
+  OLE target is gone in this mode, the Profiles list cannot be reordered by
+  dragging; use **Move up** / **Move down**, which are always available and
+  persist the same custom order.
 
 Note that **Start with Windows** writes a normal `HKCU\...\Run` entry. Because
 the exe requires administrator rights, Windows may show a UAC prompt at sign-in;
@@ -157,10 +178,14 @@ expect the prompt.
 
 ## Application shell
 
-- **Left rail:** profile quick-switch at the top, the eight feature pages
-  (Buttons, Macro, Gun, DPI, Lighting, Performance, Auto-Switch, Profiles), and
-  **Reset to Factory** in the footer. The rail scrolls at the 560 px minimum
-  window height instead of clipping the last entries.
+- **Left rail:** profile quick-switch at the top, the feature pages
+  (Buttons, Macro, Lighting, Performance, Profiles), and **Reset to Factory**
+  in the footer. DPI stages live on the **Performance** page; per-app
+  auto-switch opens as the **Manage Apps** popup from the Profiles tab.
+  **Recoil Control** is a developer preview and appears between Macro and
+  Lighting only after it is enabled in **Settings…**.
+  The rail scrolls at the 560 px minimum window height instead of clipping the
+  last entries.
 - **Top bar:** device name, the **Apply** button (manual mode only), the
   connection indicator, live **POLLING RATE** and **DPI** readouts, and an
   upload spinner while a write is in flight.
@@ -191,7 +216,7 @@ expect the prompt.
 ## Settings dialog
 
 **Settings…** in the tray menu is the single place for application behaviour.
-It is a scrollable dialog with three groups and writes one sidecar update on
+It is a scrollable dialog with four groups and writes one sidecar update on
 **OK**; **Cancel** reverts any overlay preview it made.
 
 ### Applying changes
@@ -218,9 +243,15 @@ It is a scrollable dialog with three groups and writes one sidecar update on
 
 ### On-screen overlay
 
-- **Show on-screen overlay** — master switch (`overlay`).
+- **Show on-screen overlay** — master switch for the ambient DPI/polling cards
+  (`overlay`).
+- **Announce profile switches on the overlay** (`overlay_switch`, on by
+  default) — shows the applied profile name over the game. This replaces the
+  Windows tray notification and stays active even when the ambient overlay
+  above is off.
 - **SHOW ON CHANGE** — Profile name, DPI (including the mouse's physical DPI
-  buttons), Polling rate (`overlay_show`).
+  buttons), Polling rate (`overlay_show`). Profile name controls the profile
+  row inside a DPI/polling card; the switch announcement has its own switch.
 - **Position** — nine anchors: top/mid/bottom × left/center/right
   (`overlay_pos`).
 - **Show on the monitor under the cursor** — follow the cursor, or pin the HUD
@@ -231,37 +262,66 @@ It is a scrollable dialog with three groups and writes one sidecar update on
 - **Duration on screen** 0.3-5.0 s (`overlay_hold`).
 - **Preview** flashes the currently enabled fields without writing to the mouse.
 
+### Developer
+
+- **Enable developer features (work in progress)** (`developer_features`,
+  off by default).
+- Recoil Control is unfinished: while the switch is off its rail page is
+  hidden, the action picker does not offer the **Recoil Control** group, and
+  host playback is stopped even if it was enabled earlier. An existing button
+  that already holds a recoil pattern still reopens its editor, so profiles
+  from earlier testing remain inspectable.
+- Turning the switch on restores the page, the picker group and the saved
+  playback preference. Turning it off persists the setting and returns the
+  window to the Buttons page when the preview page was open.
+
 ---
 
 ## Profiles
 
 The wired mouse stores **14 complete profiles**. A profile contains the button
 mapping, DPI stages and colours, polling rate, lighting, Windows pointer
-settings, key response and the embedded macros/guns its buttons use.
+settings, key response and the embedded macros and recoil patterns its
+buttons use.
 
 - **Quick switch:** choose a profile in the rail combo, or double-click a row
-  in the Profiles list. The manually selected profile is the **base profile**
-  for auto-switch.
+  in the Profiles list. The manually selected profile is the one auto-switch
+  returns to when you turn it off; while it is on, the last matched profile
+  stays in place.
 - **Management:** New, Duplicate, Rename and Delete. A new profile is refused
-  with a clear message when all 14 records are used; names are kept unique.
+  with a clear message when all 14 records are used; names are kept unique. The
+  New dialog is prefilled with the next positional number (`Profile 2`,
+  `Profile 3`, …) even when the existing profiles have custom names, so the
+  counter never restarts.
 - **Search and sort:** search by name; sort by Custom order, A to Z, Z to A,
   Latest or Oldest. Sorting rewrites the stored order, which also changes
   auto-switch priority.
 - **Drag to reorder:** profile list order is match priority. The active profile
   is shown in bold and stays selected across renames and refreshes.
-- **Portable JSON mirror:** `config/profiles.json` keeps stable UI ids, match
+- **Portable JSON mirror:** `data/config/profiles.json` keeps stable UI ids, match
   rules, order and app settings, plus a complete settings mirror for every
   profile. It can be read, diffed or copied without the binary table.
 - **Import/Export `.pbin`:** the studio reads and writes the same single-record
   `0x1CC50`-byte format as the official software. Export here → import in the
-  official profile menu; export there → **Import profile…** here. Buttons, DPI
+  official profile menu; export there → **Import files…** here. Buttons, DPI
   stages/colours, polling, lighting, pointer settings, key response and embedded
-  macros/guns travel with the record. Imported macros and gun patterns are added
-  to the editable libraries.
+  macros and recoil patterns travel with the record. Imported macros and
+  recoil patterns are added to the editable libraries.
 - **Import `.psf`:** a one-way migration of a vendor text export (UTF-16LE).
   Keymaps, DPI stages, polling rate, lighting and macro events are translated to
   the wired vocabulary, including the vendor slot order. Host-only actions with
   no wired equivalent are disabled with a migration note.
+- **Batch import and drag-and-drop:** **Import files…** accepts several files at
+  once, and supported files can be dropped anywhere on the window (including the
+  Manage Apps popup). Profiles (`.pbin`, `.psf`, and `.bin` holding a full
+  record) and macros (`.mbin`, and `.bin` holding whole 856-byte records) can
+  arrive in one mixed batch. Each file is read independently, so one corrupt or
+  unsupported file is reported in a single summary without cancelling the rest.
+  The profile limit is reported per file, and a batch applies only the last
+  imported profile to the mouse. Internal list reordering is never treated as a
+  file drop. When the studio runs elevated (the default), drops arrive through
+  Windows' legacy `WM_DROPFILES` path instead of Qt's OLE target — see
+  [Administrator rights](#administrator-rights) — and the same summary is shown.
 - **Reset to Factory:** restores the active profile to the wired factory
   defaults (1000-22800 DPI stages, 125 Hz, the Wave effect in red, pointer
   defaults) and keeps its name. It asks for confirmation and writes the change
@@ -289,53 +349,70 @@ modes, and this studio matches them:
   and the device never drift apart; a mode change writes a complete profile
   because the firmware ignores a lone `0x02` frame.
 
-Each row opens the action picker. Available actions:
+Each row opens the action picker. Its groups, order and wording match the
+official driver's right-click menu exactly:
 
-- **Mouse:** Left, Right, Middle, Forward, Backward, Double Click, Scroll Up,
-  Scroll Down.
-- **DPI:** DPI +, DPI -, DPI Cycle, Sniper Key.
-- **Quick:** Three Click, Fire Key, Mode Switch, Send Gun, Light Mode Switch,
-  Report +, Report -, Report Cycle, Disable.
-- **Key Combination:** any keyboard key via the full HID list, plus the
-  left/right modifier keys (**Left/Right Ctrl, Shift, Alt, Win**) as keys in
-  their own right. **Detect Key** captures the exact side you press (for example
-  `LAlt`) instead of a generic modifier; the four modifier checkboxes remain a
-  shorthand for combining a modifier with another key.
-- **Fire Key:** rapid-fire interval 1-255 ms and click count 0-255
+- **Basic function:** Left Click, Right Click, Middle Button, Forward,
+  Backward, Scroll Up, Scroll Down.
+- **High order function:** Double Click, Three Click, Light Mode Switch,
+  Sniper Key.
+- **Fire Click:** rapid-fire interval 1-255 ms and click count 0-255
   (0 = fire while the button is held).
-- **Macro:** choose a macro from the library and a play mode — **Repeat while
-  held**, or **Play N times** (1-255).
-- **Gun:** choose a recoil pattern and a repeat of 1x, 2x or 3x.
-- **Windows:** Cut, Copy, Paste, Open, Save, Find, Redo, Select All, Print, New,
-  Close Window, Swap Windows, Show Desktop, Run Command, Lock PC.
+- **Button Off:** no action.
+- **Shortcut:** any keyboard key via the full HID list, plus the left/right
+  modifier keys (**Left/Right Ctrl, Shift, Alt, Win**) as keys in their own
+  right. **Detect Key** captures the exact side you press (for example `LAlt`)
+  instead of a generic modifier; the four modifier checkboxes remain a
+  shorthand for combining a modifier with another key.
+- **Macro:** choose a macro from the library and a play mode —
+  **Repeat while held**, or **Play N times** (1-255). The vendor calls this
+  group "Select A Macro".
+- **Recoil Control:** choose a recoil pattern and a repeat of 1x, 2x or 3x.
+  This pane is a developer preview and is offered only when **Settings… →
+  Developer** is on. The vendor hides its gun entries on the wired build, and
+  the wired firmware never executes the stored table. Run the pattern with
+  **host playback** on the Recoil Control page.
+- **DPI:** DPI Cycle, DPI +, DPI -.
+- **Report:** Report Cycle, Report +, Report -.
 - **Multimedia:** Media Player, Play/Pause, Stop, Previous Track, Next Track,
   Volume +, Volume -, Mute.
-- **Browser:** Browser Home, Favorites, Forward, Backward, Stop, Refresh,
-  Search, Email, Calculator, My Computer.
+- **Windows:** Browser Home, Browser Favorites, Browser Forward,
+  Browser Backward, Browser Stop, Browser Refresh, Browser Search, Email,
+  Calculator, My Computer.
+- **Office:** Cut, Copy, Paste, Open, Save, Find, Redo, Select All, New, Print.
+- **Advance Function:** Swap Windows, Close Window, Show Desktop, Lock PC,
+  Run Command, plus Mode Switch (vendor-hidden but needed for the
+  Office/Game layers).
+
+The vendor's hidden **Send Gun** action is not offered: this firmware has no
+separate gun table for it to play, so it would be a silent button. Use the
+**Recoil Control** page's host playback instead (enable the developer preview
+in **Settings…** first); binding a pattern in the Buttons tab stores it in the
+profile but does not make the wired mouse run it.
 
 Behaviour:
 
 - A pick applies automatically as one complete profile write; manual apply
   stages it until **Apply**.
-- **Shared table budget:** macros and guns draw from the same firmware table
-  indices 1-11. The vendor caps macro buttons at ten and gun buttons at three
-  per layer, but ten macros plus three guns are thirteen tables and cannot all
-  be uploaded. The panel shows a live warning naming how many bindings will
-  stay silent, and the apply log repeats it. Remove a macro or gun binding to
+- **Shared table budget:** macros and recoil patterns draw from the same
+  firmware table indices 1-11. The vendor caps macro buttons at ten and recoil
+  buttons at three per layer, but ten macros plus three recoil patterns are
+  thirteen tables and cannot all be uploaded. The panel shows a live warning naming how many bindings will
+  stay silent, and the apply log repeats it. Remove a macro or recoil binding to
   free a slot.
 - The firmware expects at least one button mapped to **Left Click** or
   **Send Gun**; the original software refuses such a profile. The studio writes
   it but records the same warning.
-- Macro and gun bindings are validated before they are accepted: an empty or
-  oversized macro, or a gun pattern with no movement, is rejected instead of
-  being bound.
+- Macro and recoil bindings are validated before they are accepted: an empty
+  or oversized macro, or a recoil pattern with no movement, is rejected
+  instead of being bound.
 
 ---
 
 ## Macro library
 
 Macros are named sequences of key and mouse events with per-event timing. The
-library lives in `config/macros.json` and is not limited by the 14 device
+library lives in `data/config/macros.json` and is not limited by the 14 device
 profiles; a macro is copied into the button entry that uses it.
 
 - **Editor:** each row is one event — Type (Key, Mouse button, Delay), Detail,
@@ -356,25 +433,59 @@ profiles; a macro is copied into the button entry that uses it.
   vendor output; **Export protected** sets the vendor's protected flag
   (`+0xD0`). Imports keep the macro's folder, repeat count and protected flag; a
   folder marker is rejected. Duplicate names get a ` (2)` suffix instead of
-  overwriting.
+  overwriting. **Import macros…** selects several files at once and writes the
+  library once; `.mbin` and macro-sized `.bin` files can also be dropped
+  anywhere on the window, alone or mixed with profiles.
 - **Rename:** library menu, right-click, F2, or by editing the name field.
   Names are unique across the library; a blank field restores the stored name.
 - **Adoption:** macros found in the mouse's profiles are imported into the
   library under stable ids (`dev:<profile>:<slot>`) and stay editable.
-- **Budget:** see the shared 1-11 macro/gun table limit above.
+- **Budget:** see the shared 1-11 macro / recoil table limit above.
 
 ---
 
-## Gun (recoil) patterns
+## Recoil Control patterns
 
-The official software's **Gun** page is hidden in the wired build, but the
-`Set Gun` action (`0x79`), the per-button table and the 128-byte encoder are
-present in the firmware. The studio exposes a named pattern library in
-`config/guns.json`.
+> **Developer preview.** Recoil Control is still in development. Turn on
+> **Settings… → Developer → Enable developer features (work in progress)** to
+> show the page and offer recoil patterns in the action picker. The switch is
+> off by default and the choice is stored as `developer_features`.
+
+The official software's **Gun** page is hidden in the wired build, and the
+wired firmware never executes the recoil table. Static analysis of the shipped
+`SM809 mouse Software.exe` shows that its apply routine copies only macro
+tables (action `0x16`) into the upload buffer; the `Set Gun` (`0x79`) and
+`Set Left Macro` (`0x39`) blocks are assembled and then discarded. `Data\gun.bin`
+ships empty and both gun menu entries are hidden. A button bound to **Recoil
+Control** is therefore stored in the profile but does nothing on the mouse.
+
+The studio keeps the pattern library (`data/config/guns.json`) and the vendor's
+30-row table for profile parity, and adds **host playback**: the PC injects
+the pattern's relative movement while a trigger button is held. Host playback
+is the path that actually moves the cursor.
 
 Each pattern has up to **30 bullet rows**, each with an X and Y cursor offset
 (-255 to 255) and a delay from 0 to 2550 ms in 10 ms steps. The table shows
 `#`, `X`, `Y` and `Delay (ms)`, plus the live encoded size (`n / 128 bytes`).
+
+### Playing a pattern from the PC
+
+1. Select a pattern and tune its rows.
+2. Tick **Enable host playback** and choose the **Trigger** button — Left,
+   Right, Middle, Side 1 (Back) or Side 2 (Forward). The enabled state and
+   trigger are saved in the studio settings.
+3. Hold the trigger. The pattern plays once from the first row and stops at
+   the end or when the button is released; a new press starts over.
+4. Keep the studio running. Movement is injected with Windows `SendInput`, so
+   the trigger must still reach Windows as a normal mouse button; a side
+   button the mouse itself is bound to Recoil Control on reports no press.
+   Games that read raw mouse input may ignore injected movement — test in the
+   game you play. If the game runs as administrator, run the studio elevated
+   as well.
+
+The player polls the trigger every 4 ms, honors negative X/Y offsets (unlike
+the firmware table, which stores only the magnitude), skips idle rows, and
+injects nothing while host playback is off.
 
 ### Recording a pattern
 
@@ -393,43 +504,55 @@ Each pattern has up to **30 bullet rows**, each with an X and Y cursor offset
 
 - **Clear offsets** keeps the delays and sets every X/Y offset to zero.
 - **Flip X** and **Flip Y** negate the stored offset column for games with
-  inverted controls. They do not make the firmware pull left/up.
-- **Offsets have no sign in the firmware.** The encoder transmits `|X|` and
-  `|Y|`, so every row pulls right and down regardless of the sign typed. Keep X
-  and Y positive for ordinary right/down compensation.
+  inverted controls. Host playback follows the sign, so a flipped pattern
+  pulls the other way.
+- **The uploaded table has no sign.** The encoder transmits `|X|` and `|Y|`,
+  so the profile copy always describes a right/down pull. Host playback is not
+  limited by this and moves left/up for negative rows.
 - A real offset row costs 8 bytes, an idle row 4 bytes, and the table holds 128
   bytes including a 2-byte header. Fifteen real rows fit; a longer pattern may
   use the vendor's second-half marker only while idle rows keep it inside the
   budget. The editor flags an oversized or impossible pattern.
 - A pattern whose offsets are all zero cannot move the crosshair and is
   rejected when bound.
-- The shipped driver never uploaded gun tables, so the block encoder is
-  inferred from the vendor binary. Verify a small pattern on the hardware
-  before relying on it.
+- The vendor never uploaded recoil tables, so the stored block is inferred from
+  its binary and exists only for profile parity. It does not affect host
+  playback.
 
 ### Binding
 
-- Bind a pattern on the **Buttons** tab with the **Gun** action and a 1x/2x/3x
-  repeat. The mouse plays the stored rows itself; the studio does not need to
-  be running.
-- One Office/Game layer holds at most **three** gun buttons; `Set Left Macro`
+- Binding a pattern on the **Buttons** tab with **Recoil Control** and a
+  1x/2x/3x repeat stores the table in the profile, so it survives `.pbin`
+  export/import. The wired mouse will not execute it; use host playback.
+- One Office/Game layer holds at most **three** recoil buttons; `Set Left Macro`
   (`0x39`) shares that three-button range and counts toward the limit.
-- Gun tables come from the same eleven slots macros use, so a layer full of
-  macros can starve a gun. The Buttons tab shows the shared budget warning.
+- Recoil tables come from the same eleven slots macros use, so a layer full
+  of macros can starve a pattern. The Buttons tab shows the shared budget
+  warning.
 - Patterns found in the mouse's profiles are adopted under
   `dev:<profile>:<slot>` and stay editable.
 
-The Gun page also contains a collapsible **HOW TO USE** card with the same
-five-step workflow, kept behind a button so the pattern editor stays visible at
-the default window size.
+The Recoil Control page also contains a collapsible **HOW TO USE** card with
+the same five-step workflow, kept behind a button so the pattern editor stays
+visible at the default window size.
+
+---
 
 ---
 
 ## DPI stages
 
+The DPI stage editor is the lower part of the **Performance** page, below the
+polling and pointer cards.
+
 - **Eight stage rows**, each 100-24,000 DPI in 100 DPI steps. Values snap to the
   nearest step. The default stages are 1000, 1600, 2400, 3200, 4800, 6400,
   12000 and 22800 DPI.
+- **Type a value:** the readout is also a number box for exact entry. Click it,
+  type digits and press Enter (or Tab away); letters are rejected as you type,
+  a number outside 100-24,000 settles on the nearest limit, and the slider moves
+  to match. Nothing is applied until the edit is committed, so a half-typed
+  number never reaches the mouse.
 - **Enable checkbox:** uncheck a stage to skip it when cycling through DPI
   stages. Disabled rows are dimmed. The mouse stores the stages as one
   continuous list, so enabled rows keep their order but gaps are closed when
@@ -475,8 +598,8 @@ vendor Light page:
 
 ## Performance and pointer
 
-The Performance page mirrors the official page's ranges and stores the values in
-the wired profile.
+The Performance page mirrors the official page's ranges, stores the values in
+the wired profile, and carries the DPI stages below the pointer card.
 
 ### Polling rate
 
@@ -496,28 +619,28 @@ the wired profile.
 - **Key response** 1-100 ms, stored at profile `+0x138`. `Data.ini` has
   `Distance=0`, so the official driver and this studio both skip the `0x04`
   frame that would carry it; the value still travels with the profile.
+- **Type a value:** every readout on this page is also a number box, like the
+  DPI stages. Click the orange number, type digits and press Enter (or Tab
+  away); letters are rejected and an out-of-range number settles on the nearest
+  limit. The slider moves to match, and the usual 250 ms debounce applies the
+  committed value. A half-typed number is never staged.
 - Pointer settings are applied through the Windows pointer API when the profile
   is written.
 - There is **no lift-off distance control**: this unit's `Data.ini` has
   `Distance=0`, so the `0x04`/`0x07` frames are skipped exactly as the official
   driver does.
 
-### Scroll direction (this mouse)
+### Scroll direction
 
-The SM809 encoder reports the opposite direction from the Windows default, and
-there is no firmware direction command. The **SCROLL DIRECTION** card fixes this
-per device:
+The wheel uses the normal Windows direction: *Down motion scrolls down*. The
+studio no longer changes `FlipFlopWheel` or any other Windows scrolling setting.
+A per-device inversion card existed while one unit's encoder reported the
+opposite direction; that hardware fault has been fixed and the workaround was
+removed along with `wired.wheel_direction`.
 
-- **Invert scrolling for this mouse** asks for administrator permission once,
-  sets `FlipFlopWheel` for the SM809 HID mouse collection, and returns Windows'
-  global *Scrolling direction* to "Down motion scrolls down".
-- Only the SM809 is affected; other mice keep their own direction.
-- The mouse disconnects for about a second while Windows reloads it. If
-  scrolling is still unchanged, unplug/reconnect the mouse or sign out of
-  Windows once — Windows reads this value when the device starts.
-- Turning the option off restores the normal Windows direction for this mouse.
-- Every attempt, restart and verification result is written to
-  `logs/studio.log` under `sm809.wheel`.
+Every profile is written with the standard Scroll Up / Scroll Down actions,
+including profiles imported from other machines, so changing profiles (for
+example through auto-switch) can never flip scrolling.
 
 ---
 
@@ -528,26 +651,57 @@ The headline feature the official wired software does not have.
 - Each profile can hold one or more **custom apps**: executable name, full
   path, or part of the window title. Blank fields are ignored; every filled
   field must match, case-insensitively.
-- **Custom apps** page: click a profile on the left to see the apps assigned to
-  it on the right. The same list is reachable from **Profiles → Manage apps…**.
+- **Manage Apps popup:** open it from **Profiles → Manage apps…** (or the
+  button under the profile list). The clicked profile is preselected. Click a
+  profile on the left to see the apps assigned to it on the right; the popup
+  stays open while you start a game for **Detect app**.
 - **Add app…** opens a searchable list of every running window, with icons and
   exe names (like the NVIDIA Control Panel program list), and assigns the
   chosen app immediately. The rule uses the exe name alone when it is unique,
   adds the full path only when another running app shares the exe (e.g. UE's
   `Client-Win64-Shipping.exe`), and adds the window title for UWP apps that all
   run inside `ApplicationFrameHost.exe`.
+- **Include background processes (Task Manager)** adds the process list to the
+  picker, exactly as Task Manager shows it. This covers launchers and
+  background clients with no window, and anti-cheat titles whose window may be
+  protected; those entries build exe-only rules. Listing a process never opens
+  it, and matching only asks for a full image path when a rule actually has a
+  path condition — once per foreground process, cached — so the studio does
+  not repeatedly touch a running game.
 - **Detect app (3s)…** does the same for the foreground window without using
   the list — useful for a fullscreen game. A second capture of the same app is
   not duplicated. The overlay confirms what was captured.
 - **Browse…** in the Add app dialog chooses an application's `.exe` from disk,
   so games and launchers that are not currently running can be added too.
-- **Live readout:** while the page is open it shows the current foreground exe
-  and whether it matches a profile.
+- **Live readout:** while the Manage Apps popup is open it shows the current
+  foreground exe and whether it matches a profile.
 - **Priority:** first match in profile-list order wins. Drag profiles to
   reorder or sort the list.
-- **Base profile:** the profile you selected manually is sticky. When a focused
-  app matches a rule, that profile is applied temporarily; when focus moves to
-  an app with no rule, the base profile returns.
+- **A rule's path is a preference, not a lock:** the exe name is what
+  identifies the app; the stored folder is used to tell same-named
+  executables apart (e.g. `Client-Win64-Shipping.exe`). If a launcher moves
+  the game to a new versioned folder (Bloxstrap) or Windows briefly refuses
+  the foreground path, the rule still matches by exe instead of silently
+  going dead.
+- **Alt-Tab and minimize:** focus changes are the trigger. Play one game, then
+  Alt-Tab or minimize to another (Minecraft → Delta Force → Roblox) and that
+  game's profile takes over. Moving to an app with no rule leaves the last
+  applied profile alone — the mouse does not write anything. During the brief
+  "no foreground window" moment Windows reports while a game minimizes or an
+  Alt-Tab is in flight, the current profile is held instead of flashing
+  through another profile and writing the mouse twice.
+- **Sticky last profile:** the profile on the mouse stays until a focused app
+  matches a rule, or you turn auto-switch off. Turning it off restores the
+  profile you selected manually, so a rule-less window never drags the mouse
+  onto a profile you did not associate with any app.
+- **The whole UI follows the switch:** the rail **PROFILE** combo and the
+  **Profiles** tab move to the profile that is actually on the mouse. The tab's
+  bold "active" marker moves with it. A rename/reorder/rule refresh keeps
+  showing the applied profile instead of snapping back to the manual one.
+- **No silent idle state:** enabling auto-switch while no profile has custom
+  apps shows a status message saying it can never trigger, and the live
+  readout says "no custom apps configured yet" instead of a bare "no match".
+  The diagnostics log records the enable with its rule count.
 - **No redundant writes:** a switch fires only when the target profile differs
   from the one already applied, so a steady foreground never re-pushes config.
 - **Debounce:** the foreground window is polled every 200 ms and must remain
@@ -555,9 +709,22 @@ The headline feature the official wired software does not have.
 - **Elevated games:** if Windows denies process-query access (some launchers or
   anti-cheat titles), the watcher falls back to a process snapshot, so exe-name
   and title rules still match.
-- Auto-switch can be enabled on its page or from the tray menu, and the setting
-  persists. Switching is announced by a tray notification and, if enabled, the
-  overlay.
+- Auto-switch can be enabled in the Manage Apps popup or from the tray menu,
+  and the setting persists. A switch is announced on the **on-screen overlay**
+  with the applied profile name (no Windows tray toast); turn off **Announce
+  profile switches on the overlay** in Settings to silence it.
+- **Low-touch detection:** the foreground exe is read from a Toolhelp process
+  snapshot — the same list Task Manager uses — so the game process is never
+  opened for ordinary exe/rule matching. The image path is queried only when a
+  rule uses one, cached per process, and retried only after the foreground
+  changes. The window title is read only when a rule has a title, so the common
+  exe-only setup does no extra Win32 call every 200 ms. The Win32 prototypes are
+  built once per process (and keep 64-bit window handles exact).
+- **Honest switch card:** if the device write fails, the pending "Switching to …"
+  card is replaced by **Not applied · `<profile>`**, the dedupe snapshot is
+  cleared, and the next rule match or manual Apply really writes the config
+  again. Selecting a profile the mouse already has settles the card at once
+  instead of waiting for a busy signal that never comes.
 
 ---
 
@@ -566,10 +733,14 @@ The headline feature the official wired software does not have.
 ### Overlay
 
 A frameless, always-on-top, click-through HUD for profile, DPI and polling-rate
-changes.
+changes. It is also the profile-switch notification: the applied profile name
+appears over the game instead of a Windows tray toast.
 
 - **Show on change:** profile name, DPI (including the mouse's physical DPI
   buttons), polling rate — each independently toggleable.
+- **Profile switch announcement:** its own setting (`overlay_switch`, on by
+  default) so the switch card still appears when the ambient DPI/polling
+  overlay is off.
 - **Position:** nine anchors (top/mid/bottom × left/center/right).
 - **Multi-monitor:** follow the monitor under the cursor, or pin the HUD to a
   chosen monitor.
@@ -606,13 +777,37 @@ changes.
 | Profiles | 14 records of `0x1CC50` bytes |
 | Buttons | 64 slots; Office/Game modes of 16 |
 | Macro table | 40 events, 128 encoded bytes |
-| Gun table | 30 rows, 128 encoded bytes per button |
+| Recoil table | 30 rows, 128 encoded bytes per button |
 | Lighting | 12 modes |
 | Polling | 125/250/500/1000 Hz, stored as a 0-based index |
+| Firmware-update mode | `0x04D9` / `0x8022` bootloader on `0xFF00` |
 
 The wired mouse has no battery, wireless/Bluetooth connection mode, hardware
 lift-off distance control, power management or sensor-flag controls; those parts
 of the reference UI are not present in this app.
+
+### What the update package confirms
+
+The vendor update package (`SM809Wired-V1000(4C08H)_V1.6`) was decoded
+statically — the updater was never executed and nothing was flashed. Its
+`data.bin` is a Holtek record stream behind a small header (VID/PID, 24-bit
+length, checksum and a two-byte XOR seed), and the result is a 16 KB flash image
+plus EEPROM defaults. The parts that matter to this app match the shipped
+transport:
+
+- Application descriptors: VID `04D9` / PID `A09F`, monitor `0xFF01` with input
+  report ID `6`, control `0xFF00` with a 32-byte output and 8-byte feature
+  report. Bulk blocks therefore stay at 33 bytes and feature packets at 9.
+- The profile obfuscation key `FB1570` is present in the firmware image, so the
+  host-side key in `Data.ini` is the one the device expects.
+- The bootloader is a different device: VID `04D9` / PID `8022`, Usage Page
+  `0xFF00`, 64-byte reports. It does not answer the profile protocol. The studio
+  now detects that state and reports "firmware-update mode" instead of a generic
+  "not found", including the same explanation in the offline-apply warning and
+  the device diagnostics text.
+
+The complete decode (container header, XOR derivation, record types, descriptor
+bytes and hashes) is recorded in `analysis/FIRMWARE.md`.
 
 ### Timing and smart diffing
 
@@ -644,30 +839,39 @@ of the reference UI are not present in this app.
 
 ### Data folder
 
+`data/` is the only writable folder the studio owns. It contains the portable
+copy of the device data seeded once from `seed/` **and** the host-side
+libraries, so deleting the whole folder is a complete factory reset.
+
 - `data/Data.ini` and `data/Data/{Data,profile,Default,macro,gun}.bin` are the
   portable copy of the device data, seeded once from `seed/`.
-- `SM809_DATA_DIR` moves both this folder and the host-side `config/` folder,
-  giving you a second, fully isolated portable copy.
+- `SM809_DATA_DIR` moves the complete folder, giving you a second, fully
+  isolated portable copy.
+- `data/.config-initialized` records that the one-time legacy import has been
+  decided for this data folder. It is not a user setting.
 
 ### Host-side libraries
 
-- `config/profiles.json` — profile metadata, match rules, order, app settings
+- `data/config/profiles.json` — profile metadata, match rules, order, app settings
   and a complete human-readable settings mirror for every profile.
-- `config/macros.json` — the named macro library.
-- `config/guns.json` — the named recoil-pattern library.
+- `data/config/macros.json` — the named macro library.
+- `data/config/guns.json` — the named recoil-pattern library.
 - Settings such as auto-switch, apply mode, log panel visibility, overlay
-  appearance, DPI OSD, profile sort and window geometry live in
-  `profiles.json`.
+  appearance, DPI OSD, developer features, profile sort and window geometry
+  live in `profiles.json`.
 
 ### File formats
 
 - **`.pbin`** — one complete profile record, `0x1CC50` bytes (117,840). Shared
-  with the official software, including embedded macros and gun patterns.
+  with the official software, including embedded macros and recoil patterns.
 - **`.mbin`** — one 856-byte vendor macro record, including its folder name,
   loop count and protected flag. Folder markers are rejected.
 - **`.psf`** — vendor UTF-16LE text export, imported one-way as a migration
   source. The studio never writes `.psf`.
-- **`.bin`** — raw wired profile table accepted by **Import profile…**.
+- **`.bin`** — the vendor's headerless container name. Its size decides how it
+  is imported: a full profile record (>= 117,840 bytes) is treated as a
+  profile; whole 856-byte macro records are treated as a macro. Both accept
+  batch and drag-and-drop import.
 
 ### Logs
 
@@ -717,11 +921,13 @@ Useful troubleshooting:
 - **Mouse not detected:** check the cable, close the official software (it may
   hold the HID interface), and watch the top-bar connection dot. The app retries
   automatically.
-- **Settings revert after a reconnect:** Windows may have reset the per-device
-  wheel value; the SCROLL DIRECTION card re-reads it each time the page is
-  opened.
-- **A bound macro/gun does nothing:** check the Buttons budget warning and the
+- **Settings revert after a reconnect:** the studio re-pushes the active profile
+  when the mouse comes back; check the apply log for the failing section.
+- **A bound macro does nothing:** check the Buttons budget warning and the
   apply log; a table beyond index 11 is left unpointed.
+- **A bound recoil pattern does nothing:** expected — wired firmware never
+  executes recoil tables. Enable **Settings… → Developer**, then use **host
+  playback** on the Recoil Control page and keep the studio running.
 - **Lighting looks wrong:** inspect the encoded `0D`/`10` frames at DEBUG; the
   studio always writes the complete LED group.
 - **Auto-switch does not fire:** make sure the app appears in the selected
@@ -747,18 +953,20 @@ Useful troubleshooting:
   needs Python and the dependencies in `requirements.txt`.
 - **No LOD, battery, wireless status, power management or sensor flags.** Those
   controls belong to the wireless hardware and are intentionally absent.
-- **Firmware table budget.** Ten macro buttons and three gun buttons share
+- **Firmware table budget.** Ten macro buttons and three recoil buttons share
   eleven uploadable table slots; a layer cannot hold all thirteen. The UI warns
   and names the bindings that will be silent.
-- **Gun offsets are magnitudes.** The firmware pulls right/down; sign handling
-  is only an editor convenience.
-- **Gun row budget.** The 128-byte table fits fifteen real rows; longer patterns
+- **Recoil offsets are magnitudes in the stored table.** The firmware copy
+  pulls right/down; host playback honors the sign and can pull left/up.
+- **Recoil row budget.** The 128-byte table fits fifteen real rows; longer patterns
   are possible only with enough idle rows to stay inside the budget.
-- **Gun encoder is inferred.** The shipped driver never uploaded gun tables and
-  the encoder was reconstructed from the vendor binary. Verify a small pattern
-  on the hardware before relying on it.
-- **Wheel fix needs UAC once.** It changes a Windows per-device setting and may
-  require a reconnect or one sign-out to take effect.
+- **Wired firmware never executes recoil tables.** The shipped driver hid its
+  Gun page and never uploaded the table; the encoder exists only for profile
+  parity. Host playback is the working path, so the studio must stay running,
+  and games that read raw mouse input may ignore the injected movement.
+- **Host playback is opt-in and global.** While enabled it watches the chosen
+  trigger even when the studio is in the background; disable it before editing
+  if the trigger is a button you use on the desktop.
 - **`.psf` migration is one-way.** Host-only vendor actions have no wired
   equivalent and are disabled with a note.
 - **Single instance.** The tray-based design intentionally prevents a second
@@ -780,7 +988,7 @@ Useful troubleshooting:
 - Manual apply stages edits and requires an explicit **Apply**.
 - **Reset to Factory** asks for confirmation before overwriting the active
   profile.
-- Macro and gun tables are validated and budgeted before upload; impossible or
+- Macro and recoil tables are validated and budgeted before upload; impossible or
   empty bindings are rejected instead of overwriting firmware memory.
 
 ---
@@ -798,9 +1006,10 @@ PyInstaller. Build from the folder that contains the spec:
 `build_exe.bat` wraps this for releases. It refuses to run while
 `SM809WiredStudio.exe` is open, then deletes `build\SM809WiredStudio`, `dist\`
 and the working `data\` folder before invoking PyInstaller with `--clean`.
-`data\` is recreated from `seed\` on the next launch, so a fresh exe starts with
-the single factory **Profile**. Your source `config\` libraries are never
-deleted.
+Because the host libraries now live in `data\config\`, a fresh exe starts with
+factory defaults: one **Profile** and no saved macros, patterns or app
+settings. An old pre-upgrade `config\` folder beside the source is never
+deleted; it is only a manual backup and is not read by the new layout.
 
 ### What the spec bundles
 
@@ -817,7 +1026,7 @@ All read-only resources resolve through `sys._MEIPASS` at runtime
 | `seed/Data/Default.pbin` | Factory profile template used by **Reset to Factory** |
 | `seed/Data/profile.bin` | Initial single-profile table (`0x1CC50` bytes) |
 | `seed/Data/macro.bin` | Factory macro table (two records) |
-| `seed/Data/gun.bin` | Factory gun table (empty) |
+| `seed/Data/gun.bin` | Factory recoil table (empty) |
 
 The spec checks every path above before building and aborts with a readable
 error if one is missing. It uses explicit file entries rather than whole
@@ -825,9 +1034,9 @@ folders, so a stray file in `seed/` can never ship inside a release.
 
 ### What the spec deliberately leaves out
 
-- The developer's `data/`, `config/`, `logs/` and `backups/` folders. They are
-  never packed, so no personal profiles, macros, guns or settings travel with a
-  release.
+- The developer's `data/` (including `data/config/`), legacy `config/`, `logs/`
+  and `backups/` folders. They are never packed, so no personal profiles,
+  macros, recoil patterns or settings travel with a release.
 - The vendor installation under `C:\Program Files (x86)\SM809 mouse Software`
   and its sample profile library.
 - `tests/`, `analysis/`, `.venv/`, `build/` and `dist/`.
@@ -863,7 +1072,7 @@ copy before overwriting it. On first launch the exe creates, beside itself:
 ```
 data/Data.ini
 data/Data/{Data,profile,Default,macro,gun}.bin
-config/{profiles,macros,guns}.json
+data/config/{profiles,macros,guns}.json
 logs/studio.log
 ```
 
@@ -907,17 +1116,21 @@ packages.
 
 ### Coverage by file
 
-The studio suite contains **181 tests**:
+The studio suite contains **249 tests**:
 
 | File | Tests | Focus |
 | --- | ---: | --- |
-| `test_core.py` | 17 | Seed/data, profile limits, config round-trip, `.pbin` parity, wheel swap, monitor reads, key/slot ordering |
-| `test_gui_smoke.py` | 22 | Full window in demo mode, every page at minimum width, lighting debounce, mode/DPI push, Apply modes, log panel, shared table budget |
-| `test_autoswitch.py` | 21 | Rule matching, priority, debounce/revert, running-app picker, 3-second detect, browse, elevation hint |
+| `test_action_picker.py` | 11 | Vendor menu parity: group order, submenu contents, Button Off, hidden Send Gun, editor panes, reopening bound actions, hidden Recoil Control preview |
+| `test_core.py` | 20 | Seed/data, profile limits, positional profile naming, config round-trip, `.pbin` parity, wheel normalization, monitor reads, bootloader detection, key/slot ordering |
+| `test_gui_smoke.py` | 30 | Full window in demo mode, every page at minimum width, lighting debounce, mode/DPI push, Apply modes, log panel, auto-switch UI follow and overlay announcement, failed-apply retry and "Not applied" card, skipped-apply card settling, shared table budget, developer preview gating and Settings switch, prefilled new-profile numbering, DPI-in-Performance and the Manage Apps popup |
+| `test_import_files.py` | 6 | Extension/size classification, `.bin` sniffing, path dedupe, drop acceptance and internal-drag pass-through, mixed batch profile+macro import, per-file failure isolation, profile-limit reporting |
+| `test_elevated_drop.py` | 7 | Fabricated `WM_DROPFILES` decoding, window scoping, bridge routing, unrecognised-file rejection, elevation/platform gate, Move up/down reorder, native-drop mode |
+| `test_autoswitch.py` | 31 | Rule matching, priority, sticky last profile, path-preference matching, on-demand path and title reads, Alt-Tab/minimize chain, running-app and Task Manager process pickers, 3-second detect, browse, elevation hint, Profiles marker follow |
 | `test_capture_regression.py` | 6 | Byte-exact Office/Game apply cycles captured from the official app with USBPcap, including the echoed 0x03 status frame |
-| `test_dpi_stage_selection.py` | 8 | Disabled stages, relative selection, device pushes, clamping |
+| `test_dpi_stage_selection.py` | 13 | Disabled stages, relative selection, device pushes, clamping, typed numeric entry and slider sync |
 | `test_elevation.py` | 5 | Admin detection, relaunch matrix, declined UAC, sentinel |
-| `test_guns.py` | 11 | Encoding budget, zero-movement rejection, store adoption, binding round-trip, recorder trimming |
+| `test_guns.py` | 14 | Encoding budget, zero-movement rejection, store adoption, binding round-trip, recorder trimming, host-playback wiring |
+| `test_recoil_player.py` | 12 | Host playback timing, trigger edges, one-burst-per-press, edit/disable stops, junk-row cleaning |
 | `test_lighting_page.py` | 8 | Vendor Light-page controls, defaults, loop colours, panel visibility |
 | `test_lighting_safety.py` | 12 | Frame clamping, palette packing, hostile configs, legacy repair |
 | `test_log_panel.py` | 3 | Live streaming, history backfill, clear/close |
@@ -925,13 +1138,17 @@ The studio suite contains **181 tests**:
 | `test_macro_io.py` | 9 | Byte-identical `.mbin` round-trip, protected flag, folder rejection, unique names |
 | `test_macro_protocol.py` | 10 | Event/table encoding, descriptor pairing, shared 1-11 budget, upload path |
 | `test_performance_and_macros.py` | 3 | Official ranges, mouse-message mapping, mouse-button recording |
-| `test_psf_and_timing.py` | 18 | `.psf` migration, JSON portability, section diffing, mandatory delays, data-dir isolation |
-| `test_smoothness.py` | 8 | Deferred saves, cheap summaries, no-op guards, autoswitch targets |
-| `test_wheel_direction.py` | 12 | Registry mapping, elevated helper, retries, panel state/revert |
+| `test_performance_entry.py` | 8 | Typed pointer/key-response values, letter rejection, commit-only apply, slider sync |
+| `test_psf_and_timing.py` | 22 | `.psf` migration, JSON portability, section diffing, mandatory delays, data-folder layout, legacy config import and factory reset |
+| `test_smoothness.py` | 11 | Deferred saves, cheap summaries, no-op guards, autoswitch targets, cached sidecar configs, atomic mirror writes, unchanged-setting no-ops |
 
 GUI tests use `QT_QPA_PLATFORM=offscreen` through the test fixtures and never
 open a real device; hardware behaviour is validated manually with the mouse
-attached.
+attached. Panels and dialogs reference their children from lambdas, so every Qt
+test leaves cyclic garbage; `tests/conftest.py` collects it after each test,
+because letting the collector run at an arbitrary moment inside a Qt event
+dispatch (with a device worker thread mid-call) intermittently aborted the
+interpreter with exit 139.
 
 ---
 
@@ -951,35 +1168,38 @@ sm809-wired-studio/
 │   ├── main_window.py         # TopBar + MainWindow: rail, pages, apply pipeline, tray, settings
 │   ├── controller.py          # DeviceController: background DeviceService worker and Qt signals
 │   ├── profile_store.py       # ProfileStore: wired DataStore adapter, sidecar metadata, import/export
-│   ├── autoswitch.py          # ForegroundWatcher, rule matching, app picker helpers, AutoSwitcher
+│   ├── autoswitch.py          # ForegroundWatcher (snapshot-based), rule matching, app/process pickers, AutoSwitcher
 │   ├── autostart.py           # per-user Start with Windows registry entry
 │   ├── elevation.py           # UAC detection, self-relaunch, declined-UAC handling
 │   ├── log_bridge.py          # logging -> Qt signal bridge for the live log panel
 │   ├── logging_setup.py       # rotating file log, repeat collapsing, crash/Qt hooks
-│   ├── macro_store.py         # named macro library (config/macros.json)
+│   ├── macro_store.py         # named macro library (data/config/macros.json)
 │   ├── macro_file.py          # vendor .mbin import/export (856-byte records)
-│   ├── gun_store.py           # named recoil-pattern library (config/guns.json)
+│   ├── file_import.py         # supported-file detection + app-wide drag-and-drop routing
+│   ├── win_drop.py            # elevated-window WM_DROPFILES bridge (UIPI workaround)
+│   ├── gun_store.py           # named recoil-pattern library (data/config/guns.json)
+│   ├── recoil_player.py       # PC-side pattern playback (SendInput + trigger polling)
 │   ├── psf_import.py          # one-way vendor .psf profile migration
-│   ├── recoil_recorder.py     # Raw Input mouse-delta capture for the Gun recorder
+│   ├── recoil_recorder.py     # Raw Input mouse-delta capture for the recoil recorder
 │   ├── mouse_hook.py          # system-wide low-level mouse-button hook for macro recording
-│   ├── paths.py               # frozen-aware app/config/resource paths
+│   ├── paths.py               # writable data/config paths, one-time legacy config import
 │   ├── theme.py               # Precision Instrument palette, fonts and QSS
 │   │
 │   ├── panels/
 │   │   ├── __init__.py
 │   │   ├── buttons_panel.py   # 64-slot Office/Game remap grid + mouse reference
 │   │   ├── macro_panel.py     # macro library, event editor, recorder, .mbin I/O
-│   │   ├── gun_panel.py       # recoil-pattern library, recorder, row editor
+│   │   ├── gun_panel.py       # recoil-pattern library, recorder, row editor, host playback
 │   │   ├── dpi_panel.py       # eight DPI stages, enable flags, colours, active stage
 │   │   ├── lighting_panel.py  # vendor Light page: effects, parameters, palette
-│   │   ├── performance_panel.py # polling, pointer settings, key response, wheel fix
+│   │   ├── performance_panel.py # polling, pointer settings, key response
 │   │   ├── autoswitch_panel.py# per-profile custom apps, detect, live foreground readout
 │   │   ├── profiles_panel.py  # profile list, search, sort, drag order, management actions
 │   │   └── app_picker.py      # NVIDIA-style running-window picker + Browse for an exe
 │   │
 │   └── widgets/
 │       ├── __init__.py
-│       ├── action_picker.py   # action categories, shortcut/fire/macro/gun editors
+│       ├── action_picker.py   # action categories, shortcut/fire/macro/recoil editors
 │       ├── color_picker.py    # themed preset + HSV/RGB/hex colour picker
 │       ├── controls.py        # ResponsiveRow, Card, Segmented
 │       ├── log_panel.py       # dockable live log view (Clear / Open / ×)
@@ -1003,8 +1223,7 @@ sm809-wired-studio/
 │   ├── config.py              # Data.ini parser/writer
 │   ├── keys.py                # virtual-key <-> firmware key-id mapping (111 rows)
 │   ├── paths.py               # portable data folder and one-time seed copy
-│   ├── winspi.py              # Windows pointer settings (speed, wheel, double-click)
-│   └── wheel_direction.py     # per-device FlipFlopWheel fix + elevated helper
+│   └── winspi.py              # Windows pointer settings (speed, wheel, double-click)
 │
 ├── seed/                      # clean factory data copied once on first launch
 │   ├── Data.ini
@@ -1018,11 +1237,13 @@ sm809-wired-studio/
 │   └── check.png              # themed checkbox/radio check mark
 │
 ├── data/                      # created on first run (git-ignored)
-├── config/                    # profiles.json / macros.json / guns.json (git-ignored)
+│   ├── Data/                  # seeded device tables
+│   └── config/                # profiles.json / macros.json / guns.json + app settings
+├── config/                    # legacy pre-upgrade library, copied once and no longer read
 ├── logs/                      # studio.log + rotations (created on first run)
 ├── backups/                   # optional manual backups (never bundled)
 ├── build/ dist/               # PyInstaller work/output (git-ignored)
-└── tests/                     # 181 offline tests (see above)
+└── tests/                     # 249 offline tests (see above)
 ```
 
 ---
@@ -1034,9 +1255,9 @@ sm809-wired-studio/
 1. **`wired/` — device core.** Binary-compatible records (`Profile`,
    `ButtonEntry`, `MacroRecord`, `GunRecord`), the `DataStore` file layer, the
    wire protocol/encoders, `DeviceService` (connect, handshake, diffed apply,
-   monitor events), the ctypes HID transport, Data.ini parsing, key mapping,
-   Windows pointer settings and the wheel-direction fix. It has no Qt imports
-   and can be tested headlessly.
+   monitor events), the ctypes HID transport, Data.ini parsing, key mapping
+   and Windows pointer settings. It has no Qt imports and can be tested
+   headlessly.
 2. **`sm809pro/` — adapter layer.** Small helpers that translate between UI
    concepts and the wired core: action tuples, factory defaults, slot mapping,
    text-to-macro conversion, DPI/light labels.
@@ -1054,12 +1275,13 @@ run_app.main
   -> app.elevation.prepare_startup      # UAC relaunch unless --demo/--no-elevate
   -> app.logging_setup.setup_logging    # console + rotating DEBUG file
   -> app.log_bridge.install             # logging -> Qt signal
+  -> app.paths.migrate_legacy_config    # one-time config/ import; reset if data/ was deleted
   -> QApplication + theme palette/QSS
   -> single-instance hand-off           # second launch raises the first, then exits
   -> splash
   -> MainWindow
        -> ProfileStore()                # opens data/Data, reads sidecar JSON
-       -> MacroStore(), GunStore()      # config/macros.json, config/guns.json
+       -> MacroStore(), GunStore()      # data/config/macros.json, data/config/guns.json
        -> adopt embedded macros/guns    # dev:<profile>:<slot> ids
        -> build panels, wire signals
        -> AutoSwitcher, overlay, tray, log panel
@@ -1105,21 +1327,28 @@ panel signal (apply_requested / polling_changed / ...)
 | `data/Data/profile.bin` | `DataStore` through `ProfileStore` | 14 complete `0x1CC50` records (authoritative for the mouse) |
 | `data/Data/Data.bin` | `DataStore` | Selected record index |
 | `data/Data/macro.bin` | `DataStore` | Device macro table |
-| `data/Data/gun.bin` | `DataStore` | Device gun table |
-| `config/profiles.json` | `ProfileStore` | Stable ids, names, match rules, order, active id, app settings, full config mirror |
-| `config/macros.json` | `MacroStore` | Named macros with events, loop, folder, protected flag |
-| `config/guns.json` | `GunStore` | Named patterns with rows |
+| `data/Data/gun.bin` | `DataStore` | Device recoil table |
+| `data/config/profiles.json` | `ProfileStore` | Stable ids, names, match rules, order, active id, app settings, full config mirror |
+| `data/config/macros.json` | `MacroStore` | Named macros with events, loop, folder, protected flag |
+| `data/config/guns.json` | `GunStore` | Named patterns with rows |
+| `data/.config-initialized` | `app.paths` | One-time legacy-import / reset decision marker |
 | `logs/studio.log` | `logging_setup` | DEBUG diagnostics, rotating 2 MB × 4 |
 
 ### Auto-switch loop
 
 `AutoSwitcher` is a 200 ms timer feeding `ForegroundWatcher` (GetForegroundWindow
-plus process query, with a Toolhelp snapshot fallback). The foreground must stay
-stable for 200 ms before a rule is applied. `match_profile()` walks profiles in
-list order and returns the first match. `_apply_by_id()` writes the matched
-profile without changing the manually selected **base** profile; when the
-foreground no longer matches, the base profile is restored. A switch only fires
-when the target differs from the profile already applied.
+plus a cached Toolhelp snapshot). The Win32 entry points, handle types and
+`PROCESSENTRY32W` layout are bound once; window titles are read only when some
+rule has a title, and image paths only when some rule has a path. The foreground
+must stay stable for 200 ms before a rule is applied. `match_profile()` walks
+profiles in list order and returns the first match; a stored path only relaxes
+its condition when the foreground path is unreadable or the stored folder no
+longer exists. `_apply_by_id()` writes the matched profile without changing the
+manually selected profile, and an unmatched foreground leaves the last applied
+profile in place — the manual profile returns only when auto-switch is turned
+off. A switch only fires when the target differs from the profile already
+applied; a failed device write drops the dedupe snapshot so the same config is
+written again next time.
 
 ---
 
@@ -1159,7 +1388,8 @@ Qt signals are noted where panels expose them to `MainWindow`.
 (`_on_nav`, `_build_profile_bar`, `_refresh_profile_combo`, `_sync_combo`,
 `_select_profile`, `_apply_by_id`, `_on_auto_switched`); profile lifecycle
 (`_profile_new`, `_profile_duplicate`, `_profile_rename`, `_profile_delete`,
-`_profile_import`, `_profile_import_pbin`, `_profile_import_psf`,
+`_profile_import`, `import_files`, `_files_dropped`, `_show_import_summary`,
+`enable_native_drop`, `_attach_native_drop`, `showEvent`,
 `_profile_export_pbin`, `_confirm_reset`, `_on_profile_reorder`,
 `_on_profile_sort`, `_on_rules_changed`, `_on_manage_apps`,
 `_on_app_detected`); panel writes (`_apply_dpi`, `_apply_active_dpi`,
@@ -1193,7 +1423,7 @@ Qt signals are noted where panels expose them to `MainWindow`.
 
 | Symbol | Purpose |
 | --- | --- |
-| `default_path()` | `config/profiles.json` next to the app or under `SM809_DATA_DIR` |
+| `default_path()` | `data/config/profiles.json` (or under `SM809_DATA_DIR`) |
 | `default_config()` | Wired factory config (from `Default.pbin`) |
 | `ProfileStore(path=None, data_dir=None, device_config=None, macro_events=None, gun_rows=None)` | Sidecar-backed adapter over `wired.model.DataStore` |
 | `.load()` / `.save()` / `.flush()` | Read/repair metadata; write the JSON mirror; settle deferred work |
@@ -1204,6 +1434,7 @@ Qt signals are noted where panels expose them to `MainWindow`.
 | `.active_id()` / `.active()` / `.set_active(pid, persist=True)` | Sticky base profile |
 | `.unique_name(name, exclude_id=None)` | `Name`, `Name (2)`, ... |
 | `.add(name, config, match_rules)` / `.duplicate(pid, name)` / `.delete(pid)` / `.rename(pid, name)` | Lifecycle (14-profile limit) |
+| `.next_default_name()` / `.unique_name(name, exclude_id=None)` | Positional `Profile N` suggestion and collision disambiguation |
 | `.reorder(ids)` / `.sort_by(key)` | Match-priority order and sorting |
 | `.set_config(pid, config, persist=True)` | Commit a config into the wired record |
 | `.set_match_rules(pid, rules)` | Auto-switch rules |
@@ -1216,14 +1447,16 @@ Qt signals are noted where panels expose them to `MainWindow`.
 
 | Symbol | Purpose |
 | --- | --- |
-| `ForegroundWatcher.current()` | `(exe, title, full_path)` for the focused window |
+| `ForegroundWatcher.current(need_path=False)` | `(exe, title, full_path)` for the focused window; the exe comes from a process snapshot, the path is read only on request and cached |
 | `list_running_apps()` | Visible top-level windows as `{title, exe, path}` |
+| `list_processes()` | Running processes by exe name (Task Manager style, no process opened) |
 | `rule_for_app(apps, app)` | Narrowest usable rule for one running app |
-| `rule_matches(rule, exe, title, path)` | All non-empty conditions must match case-insensitively |
-| `match_profile(profiles, exe, title, path)` | First matching profile in list order |
+| `rule_matches(rule, exe, title, path)` | All non-empty conditions must match case-insensitively (`require_path=False` ignores the path clause) |
+| `match_profile(profiles, exe, title, path)` | First matching profile in list order; path clause relaxed only when the path is unreadable or its folder is gone |
 | `AutoSwitcher(store, apply, get_applied, watcher=None, interval_ms=200, debounce_ms=200)` | Poll/debounce/switch engine |
-| `.set_base(pid)` / `.base_id()` | Sticky manual profile |
-| `.set_enabled(on)` / `.is_enabled()` | Master switch |
+| `.set_base(pid)` / `.base_id()` | Manual profile restored when auto-switch is turned off |
+| `.set_enabled(on)` / `.is_enabled()` | Master switch (off restores the manual profile) |
+| `.stop()` | Stop the timer without touching the device (application shutdown) |
 | `.poll()` | One foreground sample (timer calls this) |
 
 ### `app.autostart`, `app.elevation`, `app.paths`
@@ -1236,7 +1469,8 @@ Qt signals are noted where panels expose them to `MainWindow`.
 | `elevation.relaunch_as_admin(args=None)` | `ShellExecuteW("runas", ...)`; `True` when accepted |
 | `elevation.ask_continue_unelevated()` | Yes/No prompt after a declined UAC |
 | `elevation.prepare_startup(argv)` | Pre-Qt gate: continue in-process or exit for the elevated child |
-| `paths.is_frozen()` / `app_dir()` / `config_dir()` / `resource_path(*parts)` | Frozen-aware file locations |
+| `paths.is_frozen()` / `app_dir()` / `data_dir()` / `config_dir()` / `resource_path(*parts)` | Frozen-aware file locations; `config_dir()` is always `<data_dir>/config` |
+| `paths.migrate_legacy_config()` | One-time import of a pre-upgrade `<app>/config` library; no-op after a reset or under `SM809_DATA_DIR` |
 
 ### `app` logging and diagnostics
 
@@ -1252,12 +1486,12 @@ Qt signals are noted where panels expose them to `MainWindow`.
 
 | Symbol | Purpose |
 | --- | --- |
-| `macro_store.default_path()` | `config/macros.json` |
+| `macro_store.default_path()` | `data/config/macros.json` |
 | `MacroStore.all()` / `.get(mid)` / `.index_of(mid)` | Library lookups |
-| `.add(name, events, loop=1, folder="", protected=False)` / `.add_with_id(mid, name, events, persist=True)` | Create/adopt |
+| `.add(name, events, loop=1, folder="", protected=False, persist=True)` / `.add_with_id(mid, name, events, persist=True)` | Create/adopt; `persist=False` batches one library write |
 | `.delete(mid)` / `.rename(mid, name)` / `.set_events(mid, events)` / `.set_meta(mid, loop, folder, protected)` | Mutations |
 | `.save()` / `.save_if_dirty()` / `.unique_name(base, exclude_id=None)` | Persistence and naming |
-| `gun_store.default_path()` | `config/guns.json` |
+| `gun_store.default_path()` | `data/config/guns.json` |
 | `gun_store.default_rows()` / `clean_rows(rows)` | Factory 30-row shape and sanitising |
 | `GunStore.all()` / `.get(gid)` / `.index_of(gid)` | Library lookups |
 | `.add(name)` / `.add_with_id(gid, name, rows, persist=True)` / `.delete(gid)` / `.rename(gid, name)` | Lifecycle |
@@ -1265,6 +1499,12 @@ Qt signals are noted where panels expose them to `MainWindow`.
 | `.save()` / `.save_if_dirty()` / `.unique_name(base, exclude_id=None)` | Persistence and naming |
 | `macro_file.load_macro(path)` / `save_macro(path, macro, protected)` / `suggest_name(macro)` | Vendor `.mbin` I/O |
 | `macro_file.MacroFileError` | Unusable record |
+| `file_import.classify_path(path)` / `split_paths(paths)` / `unique_paths(paths)` | Supported-file detection, batch split, path dedupe |
+| `file_import.FileDropRouter(window)` | Window-wide drop filter; signal `files_dropped(paths)`; `offer(paths)` (same routing for native drops); `uninstall()` |
+| `file_import.PROFILE_FILTER` / `MACRO_FILTER` / `ALL_SUPPORTED_FILTER` | File-dialog filter strings |
+| `win_drop.attach_elevated_drop(router, window)` | Install the WM_DROPFILES bridge when Windows + elevated + `windows` platform, else `None` |
+| `win_drop.ElevatedDropBridge` | `attach(window)`, `refresh()`, `detach()`, `handle_message(MSG)`, `nativeEventFilter`; feeds `router.offer` |
+| `win_drop.drop_paths(hdrop)` | `DragQueryFileW` decoding for a WM_DROPFILES handle |
 | `psf_import.parse_psf_text(text)` / `read_psf_text(path)` / `read_psf(path)` | Read official `.psf` text |
 | `decode_macro_events(blob)` / `to_macros(text, data)` | Macro decoding |
 | `to_config(data, warnings)` / `to_match_rules(data)` / `import_psf(path)` | Wired config migration |
@@ -1276,6 +1516,8 @@ Qt signals are noted where panels expose them to `MainWindow`.
 | --- | --- |
 | `recoil_recorder.RecoilRecorder.start()` / `.stop()` / `.active()` | Own the Raw Input sink |
 | `.feed(dx, dy)` / `.take_delta()` | Accumulate and drain relative movement |
+| `recoil_player.RecoilPlayer` | Host playback: `set_rows(rows)`, `set_trigger(vk)`, `set_enabled(on)`, `tick()`; signal `active_changed(bool)` |
+| `recoil_player.TRIGGERS` / `DEFAULT_TRIGGER` | Mouse-button choices (Left, Right, Middle, Side 1, Side 2) and the default trigger |
 | `mouse_hook.mouse_action(message, mouse_data)` | Map a Windows message to `(button, down)` |
 | `mouse_hook.MouseHook.start()` / `.stop()` / `.active()` | Low-level button hook |
 | `.set_ignore_widgets(widgets)` | Exclude the recorder's own Stop button and other widgets |
@@ -1292,21 +1534,21 @@ Qt signals are noted where panels expose them to `MainWindow`.
 
 | Panel | Public API and signals |
 | --- | --- |
-| `ButtonsPanel` | `set_manual_apply(manual)`, `set_mode(layer)`, `current_mode()`, `set_codes(codes)`, `bindings()`, `set_binding(slot, code)`, `refresh_labels()`; signals `apply_requested(bindings)`, `mode_changed(layer)`; helpers `ButtonRow`, `MouseReference` |
-| `MacroPanel` | `new_macro()`, `delete_macro()`, `rename_macro_dialog()`, `import_macro_dialog()`, `export_macro_dialog(protected=False)`, `insert_event(category, code, mode, delay)`, `add_text_events(text, delay)`; signal `library_changed()`; `_Recorder` captures keystrokes |
-| `GunPanel` | `new_gun()`, `delete_gun()`, `rename_gun_dialog()`; signal `library_changed()`; recorder, row editor and HOW TO USE card |
+| `ButtonsPanel` | `ButtonsPanel(codes=None, get_macros=None, get_guns=None, developer=False)`, `set_manual_apply(manual)`, `set_developer(on)`, `set_mode(layer)`, `current_mode()`, `set_codes(codes)`, `bindings()`, `set_binding(slot, code)`, `refresh_labels()`; signals `apply_requested(bindings)`, `mode_changed(layer)`; helpers `ButtonRow`, `MouseReference` |
+| `MacroPanel` | `new_macro()`, `delete_macro()`, `rename_macro_dialog()`, `import_macro_dialog()`, `import_macro_files(paths, report=True)`, `export_macro_dialog(protected=False)`, `insert_event(category, code, mode, delay)`, `add_text_events(text, delay)`; signal `library_changed()`; `_Recorder` captures keystrokes |
+| `GunPanel` | `GunPanel(store, get_setting=None, set_setting=None)`, `set_developer(on)`, `new_gun()`, `delete_gun()`, `rename_gun_dialog()`; signal `library_changed()`; recorder, row editor, host-playback card and HOW TO USE guide. `set_developer(False)` stops host playback while the shell hides the page |
 | `DpiPanel` | `active_row()`, `set_active_stage(level)`, `set_values(dpi, colors, enabled_count)`; signals `apply_requested(dpi, colors, selected)`, `active_dpi_requested(dpi, selected)`; rows are `StageRow`/`Swatch` |
 | `LightingPanel` | `current_mode()`, `color_mode()`, `set_state(mode, color, params)`; signal `apply_requested(mode, color, params)`; 250 ms debounce |
-| `PerformancePanel` | `set_manual_apply(manual)`, `refresh_wheel_fix()`, `set_state(polling_hz, pointer, key_response)`; signals `polling_changed(hz)`, `pointer_changed(pointer)`, `key_response_changed(ms)`; `_WheelFixWorker` runs the UAC helper off-thread |
+| `PerformancePanel` | `set_manual_apply(manual)`, `set_state(polling_hz, pointer, key_response)`; signals `polling_changed(hz)`, `pointer_changed(pointer)`, `key_response_changed(ms)` |
 | `AutoSwitchPanel` | `set_profiles(profiles, select_id=None)`, `set_enabled_state(on)`, `current_pid()`, `select_profile(pid)`; signals `enable_toggled(on)`, `rules_changed(pid, rules)`, `app_detected(exe, title)` |
-| `ProfilesPanel` | `set_profiles(profiles, active_id, sort_key)`, `selected_id()`, `set_match_rules(pid, rules)`; signals `profile_selected(pid)`, `order_changed(ids)`, `sort_changed(key)`, `new_requested()`, `duplicate_requested()`, `rename_requested()`, `delete_requested()`, `import_requested()`, `export_requested()`, `manage_apps_requested(pid)` |
+| `ProfilesPanel` | `set_profiles(profiles, active_id, sort_key)`, `selected_id()`, `set_match_rules(pid, rules)`, `move_selected(delta)`, `set_native_drop_mode(active)`; signals `profile_selected(pid)`, `order_changed(ids)`, `sort_changed(key)`, `new_requested()`, `duplicate_requested()`, `rename_requested()`, `delete_requested()`, `import_requested()`, `export_requested()`, `manage_apps_requested(pid)` |
 | `AppPicker` | `selected_app()`, `selected_rule()`; Browse for an `.exe`, filter, icons |
 
 ### `app.widgets`
 
 | Widget | Public API |
 | --- | --- |
-| `ActionPicker` | `result_code()`, `pick_action(current_code, parent, phys, macros, guns)`; categories, search, preview, factory-default reset |
+| `ActionPicker` | `result_code()`, `pick_action(current_code, parent, phys, macros, guns, developer)`; categories, search, preview, factory-default reset. Recoil Control is offered only with `developer=True` or when the slot already holds a pattern |
 | `set_macro_resolver(fn)` / `describe_action(code)` | Macro name resolution and label rendering |
 | `ColorPicker` | `selected_rgb()`; `pick_color(rgb, parent)` returns `(r,g,b)` or `None`; preset grid + HSV/RGB/hex editor |
 | `ResponsiveRow` / `Card` / `Segmented` | Reusable layout/card/segmented-control helpers |
@@ -1355,7 +1597,7 @@ Qt signals are noted where panels expose them to `MainWindow`.
 | `MacroEvent.unpack/pack`, `Bullet.unpack/pack` | 16-byte event and 8-byte bullet records |
 | `ButtonEntry` | View over one `0x72C` slot: `action`, `selected_index`, `macro_index`, `shortcut_mods`, `shortcut_key`, `count`, `loop`, `fire_count`, `fire_interval`, `events`, `set_events`, `bullets`, `set_bullets` |
 | `Profile` | `from_file`, `copy`, `name`, `sanitize_lighting`, `key_response`, `stage_count`, `dpi_values`, `stage_colors`, `cycle_colors`, `fixed_rgb`, `button(index)`, `buttons()` |
-| `wheel_reversed(profile)` / `set_wheel_reversed(profile, value)` | Swap the physical wheel actions |
+| `set_wheel_reversed(profile, value)` | Set the physical wheel actions; `bridge` always passes `False` so profiles use the normal direction |
 | `MacroRecord` | `name`, `folder_name`, `protected`, `loop`, `count`, `is_folder`, `events`, `set_events` |
 | `GunRecord` | `name`, `folder_name`, `count`, `is_folder`, `bullets`, `set_bullet`, `set_bullets` |
 | `DataStore(data_dir)` | `load`, `save_profiles`, `save_selected`, `save_macros`, `save_guns`, `profile`, `select`, `add_profile`, `delete_profile`, `reset_profile`, `rename_profile`, `rename_profile_at`, `duplicate_profile`, `reorder_profiles`, `sort_profiles`, `export_profile`, `import_profile`, `export_json`, `export_json_file`, `add_macro`, `add_gun`, `delete_macro`, `delete_gun`, `macro_names`, `gun_names`, `backup` |
@@ -1393,16 +1635,13 @@ Qt signals are noted where panels expose them to `MainWindow`.
 | `load_config(path)` / `DeviceConfig.save(path)` / `to_ini_text()` | `Data.ini` parsing/writing; `sensor`, `key`, `raw_button`, `button_is_computed`, `distance_value_for_stage` |
 | `key_name(vk)`, `key_id_for_vk(vk)`, `vk_for_key_id(id)`, `key_id_name(id)`, `shortcut_name(key, mods)`, `normalize_vk(vk)` | Vendor key mapping |
 
-### `wired.winspi`, `wheel_direction`, `paths`
+### `wired.winspi`, `paths`
 
 | Symbol | Purpose |
 | --- | --- |
 | `winspi.double_click_ms(index)` / `mouse_speed_value(index)` | UI index -> Windows values |
 | `winspi.set_double_click_time`, `set_mouse_speed`, `set_enhance_pointer`, `set_wheel_lines` | Apply pointer settings |
 | `winspi.PointerSettings.apply(speed, scroll, double, enhance, onepage)` | Apply only changed values |
-| `wheel_direction.device_instances()` / `read_state()` | SM809 wheel registry state |
-| `wheel_direction.apply(invert)` / `apply_elevated(invert)` | Per-device `FlipFlopWheel`, with UAC helper |
-| `WheelState.inverted` / `.partial` / `.describe()`; `WheelResult` | Result reporting |
 | `paths.ensure_data_dir()` / `logo_path()` / `is_frozen()` | Portable data and seed copy |
 
 

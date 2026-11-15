@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import theme
+from ..file_import import unique_paths
 from ..macro_file import FILE_FILTER, MacroFileError, load_macro, save_macro, suggest_name
 from ..mouse_hook import MouseHook
 from ..widgets.controls import Card
@@ -362,12 +363,12 @@ class MacroPanel(QWidget):
         del_btn.clicked.connect(self.delete_macro)
         menu_btn = QToolButton()
         menu_btn.setText(ELLIP)
-        menu_btn.setToolTip("Rename, import or export a macro")
+        menu_btn.setToolTip("Rename, import or export macros")
         menu_btn.setPopupMode(QToolButton.InstantPopup)
         menu = QMenu(menu_btn)
         menu.addAction("Rename…", self.rename_macro_dialog)
         menu.addSeparator()
-        menu.addAction("Import .mbin…", self.import_macro_dialog)
+        menu.addAction("Import macros…", self.import_macro_dialog)
         menu.addAction("Export .mbin…", self.export_macro_dialog)
         menu.addAction("Export protected .mbin…",
                        lambda: self.export_macro_dialog(protected=True))
@@ -384,7 +385,8 @@ class MacroPanel(QWidget):
 
         hint = QLabel("Saved automatically. Assign a macro to a button in the "
                       "Buttons tab to load it onto the mouse. Import/Export "
-                      "uses the original driver's .mbin format.")
+                      "uses the original driver's .mbin format; drop .mbin "
+                      "files on the window or import several at once.")
         hint.setProperty("cardHint", "true")
         hint.setWordWrap(True)
         lay.addWidget(hint)
@@ -600,7 +602,7 @@ class MacroPanel(QWidget):
         rename = menu.addAction("Rename…", self.rename_macro_dialog)
         rename.setEnabled(has_current)
         menu.addSeparator()
-        menu.addAction("Import .mbin…", self.import_macro_dialog)
+        menu.addAction("Import macros…", self.import_macro_dialog)
         export = menu.addAction("Export .mbin…", self.export_macro_dialog)
         export.setEnabled(has_current)
         protected = menu.addAction(
@@ -651,26 +653,56 @@ class MacroPanel(QWidget):
             self._refresh_list_item()
             self.library_changed.emit()
 
+    def import_macro_files(self, paths, report=True):
+        """Import one or more vendor .mbin files with ONE library write.
+
+        Every file is read on its own: a corrupt or folder-marker record is
+        collected in ``errors`` (``(file name, message)``) and the rest of the
+        batch still imports.  ``report=False`` is used by the window's mixed
+        drag-and-drop import, which shows one combined summary instead.
+
+        Returns ``(imported_records, errors)``.
+        """
+        if isinstance(paths, (str, os.PathLike)):
+            paths = [paths]
+        imported, errors = [], []
+        for path in unique_paths(paths):
+            try:
+                data = load_macro(path)
+            except (OSError, MacroFileError, ValueError) as exc:
+                errors.append((os.path.basename(path), str(exc)))
+                continue
+            name = self.store.unique_name(data["name"])
+            imported.append(self.store.add(
+                name, data["events"], loop=data.get("loop", 1),
+                folder=data.get("folder", ""),
+                protected=data.get("protected", False), persist=False))
+        if imported:
+            self.store.save_if_dirty()      # one write for the whole batch
+            self._refresh_list()
+            last = imported[-1]
+            self.macro_list.setCurrentRow(self.store.index_of(last["id"]))
+            if len(imported) == 1:
+                self.status.setText(
+                    f"Imported “{last['name']}” ({len(last['events'])} events).")
+            else:
+                self.status.setText(f"Imported {len(imported)} macros.")
+            self.library_changed.emit()
+        if report and errors:
+            shown = errors[:8]
+            msg = "Could not import:\n" + "\n".join(
+                f"• {name}: {why}" for name, why in shown)
+            if len(errors) > len(shown):
+                msg += f"\n• …and {len(errors) - len(shown)} more."
+            QMessageBox.warning(self, "Import macro", msg)
+        return imported, errors
+
     def import_macro_dialog(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Import macro", "", FILE_FILTER)
-        if not path:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Import macros", "", FILE_FILTER)
+        if not paths:
             return
-        try:
-            data = load_macro(path)
-        except (OSError, MacroFileError) as exc:
-            QMessageBox.warning(self, "Import macro", str(exc))
-            return
-        name = self.store.unique_name(data["name"])
-        m = self.store.add(name, data["events"], loop=data.get("loop", 1),
-                           folder=data.get("folder", ""),
-                           protected=data.get("protected", False))
-        self._refresh_list()
-        self.macro_list.setCurrentRow(self.store.index_of(m["id"]))
-        self.status.setText(
-            f"Imported “{os.path.basename(path)}” as “{name}” "
-            f"({len(m['events'])} events).")
-        self.library_changed.emit()
+        self.import_macro_files(paths)
 
     def export_macro_dialog(self, protected=False):
         m = self._cur()

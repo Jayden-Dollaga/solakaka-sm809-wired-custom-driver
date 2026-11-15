@@ -214,7 +214,7 @@ def test_blank_inline_rename_never_erases_the_stored_name(qapp, tmp_path):
     gid = gun_store.all()[0]["id"]
     guns.name_edit.clear()
     guns._commit_name()
-    assert gun_store.get(gid)["name"] == "Gun 1"
-    assert guns.name_edit.text() == "Gun 1"
+    assert gun_store.get(gid)["name"] == "Recoil 1"
+    assert guns.name_edit.text() == "Recoil 1"
     guns.close()
     guns.deleteLater()

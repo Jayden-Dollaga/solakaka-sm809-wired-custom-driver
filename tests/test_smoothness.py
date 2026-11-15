@@ -141,7 +141,7 @@ def test_autoswitch_poll_uses_match_targets():
             raise AssertionError("poll rebuilt every full profile config")
 
     class Watcher:
-        def current(self):
+        def current(self, need_path=False, need_title=True):
             return ("game.exe", "Game", "C:/Games/game.exe")
 
     auto = AutoSwitcher(Store(), lambda pid: applied.append(pid),
@@ -208,3 +208,64 @@ def test_dpi_highlight_and_segmented_are_noops_when_unchanged():
     seg.set_value(2)
     assert repaints == [1]
     app.processEvents()
+
+
+# ---------------------------------------------------------------------------
+# Portable JSON mirror: cached config builds + atomic replace
+# ---------------------------------------------------------------------------
+def test_mirror_configs_are_reused_between_sidecar_writes(
+        seeded_store, tmp_path, monkeypatch):
+    """Settings/rule writes must not rebuild every profile's full config.
+
+    With 14 profiles the bridge conversion was the bulk of a sidecar write
+    that changed nothing but one app setting.
+    """
+    store = seeded_store
+    builds = []
+    real = store._config
+
+    def counting(idx, pid):
+        builds.append(idx)
+        return real(idx, pid)
+
+    monkeypatch.setattr(store, "_config", counting)
+
+    assert store._mirror_configs            # warmed by the initial load()
+    store.set_setting("mirror-probe", 1)
+    store.set_setting("mirror-probe", 2)
+    assert builds == []                     # settings-only writes are cache hits
+    # A cold cache rebuilds exactly one config per profile...
+    store._mirror_configs.clear()
+    store.set_setting("mirror-probe", 3)
+    assert len(builds) == len(store.data.profiles)
+    assert not (tmp_path / "profiles.json.tmp").exists()
+
+
+def test_mirror_cache_refreshes_after_a_profile_edit(
+        seeded_store, tmp_path):
+    """An edited profile still lands in the mirror, and the temp file is gone."""
+    store = seeded_store
+    pid = store.active_id
+    store.set_setting("mirror-probe", 1)          # warm the cache
+    cfg = store.config(pid)
+    cfg["lighting"]["brightness"] = 66
+    store.set_config(pid, cfg, persist=False)
+    store.flush()
+
+    text = (tmp_path / "profiles.json").read_text(encoding="utf-8")
+    assert '"brightness": 66' in text
+    assert not (tmp_path / "profiles.json.tmp").exists()
+
+
+def test_unchanged_settings_do_not_rewrite_the_sidecar(seeded_store):
+    store = seeded_store
+    store.set_setting("mirror-probe", 5)
+    saves = []
+    real = store.save
+    store.save = lambda: (saves.append(1), real())[1]
+
+    store.set_setting("mirror-probe", 5)
+    store.set_settings({"mirror-probe": 5})
+    assert saves == []
+    store.set_settings({"mirror-probe": 6})
+    assert saves == [1]

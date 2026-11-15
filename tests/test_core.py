@@ -9,6 +9,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 # wired.paths resolves DATA_DIR at import time, so point it at a scratch folder
 # before importing anything from the wired/sm809pro/app packages.
@@ -75,11 +76,12 @@ def test_seed_ships_only_the_factory_default_profile():
 
     store = DataStore(SEED_DIR / "Data")
     assert len(store.profiles) == 1
-    assert store.profiles[0].name == "Profile"
-    # the profile must match the factory template the app resets to
+    assert store.profiles[0].name == "Profile 1"
+    # the seeded base profile is byte-identical to the factory template the
+    # app resets to (the fresh firmware default from a clean vendor install)
     default = (SEED_DIR / "Data" / "Default.pbin").read_bytes()[:PROFILE_SIZE]
     seeded = store.profiles[0].raw
-    assert bytes(seeded[0x64:]) == default[0x64:]   # everything after the name
+    assert bytes(seeded) == default
 
 
 def test_profile_store_reads_wired_profiles(store):
@@ -92,8 +94,7 @@ def test_profile_store_reads_wired_profiles(store):
     assert 1 <= cfg["dpi"]["enabled_count"] <= 8
     assert cfg["polling_hz"] in (125, 250, 500, 1000)
     assert 0 <= cfg["lighting"]["mode"] <= 11
-    assert {"speed", "scroll", "double", "enhance", "onepage",
-            "wheel_reverse"} <= set(cfg["pointer"])
+    assert {"speed", "scroll", "double", "enhance", "onepage"} <= set(cfg["pointer"])
 
 
 def test_profile_limit(store):
@@ -153,23 +154,21 @@ def test_config_round_trip(store):
     assert cfg2["buttons"][2]["events"][0]["keycode"] == 0x04
 
 
-def test_wheel_reverse_swaps_wheel_slots(store):
-    pid = store.active_id
-    cfg = store.config(pid)
-    assert not cfg["pointer"]["wheel_reverse"]
-    cfg["pointer"]["wheel_reverse"] = True
-    store.set_config(pid, cfg)
-    prof = store.data.profiles[store.index_of(pid)]
-    assert prof.button(30).action == 0x0C
-    assert prof.button(31).action == 0x0B
-    assert store.config(pid)["pointer"]["wheel_reverse"] is True
+def test_profiles_always_apply_the_normal_wheel_direction(store):
+    """A swapped wheel record (old workaround or a foreign import) is
+    normalized on write, so auto-switching profiles can never flip scrolling."""
+    from wired.model import set_wheel_reversed
 
-    cfg = store.config(pid)
-    cfg["pointer"]["wheel_reverse"] = False
-    store.set_config(pid, cfg)
+    pid = store.active_id
     prof = store.data.profiles[store.index_of(pid)]
-    assert prof.button(30).action == 0x0B
-    assert prof.button(31).action == 0x0C
+    set_wheel_reversed(prof, True)              # simulate a swapped record
+    assert prof.button(30).action == 0x0C
+
+    store.set_config(pid, store.config(pid))    # any write re-normalizes
+    prof = store.data.profiles[store.index_of(pid)]
+    assert prof.button(30).action == 0x0B       # Scroll Up
+    assert prof.button(31).action == 0x0C       # Scroll Down
+    assert "wheel_reverse" not in store.config(pid)["pointer"]
 
 
 def test_dpi_conversion_matches_sensor():
@@ -253,6 +252,24 @@ def test_profile_operations(store):
     assert len(store.all()) == before - 1
 
 
+def test_new_profile_names_count_up_by_position(store):
+    """Custom names never reset the next Profile N (the reported 4-8 case)."""
+    trim(store, keep=1)
+    assert store.next_default_name() == "Profile 2"
+    p2 = store.add()                       # API default uses the same number
+    assert p2["name"] == "Profile 2"
+    store.rename(p2["id"], "Valorant")
+    assert store.next_default_name() == "Profile 3"
+
+    # Profiles 3..8 get custom names; the next suggestion is still Profile 9.
+    for _ in range(6):
+        p = store.add()
+        store.rename(p["id"], f"Custom {p['name']}")
+    assert len(store.all()) == 8
+    assert store.next_default_name() == "Profile 9"
+    assert store.add()["name"] == "Profile 9"
+
+
 # -- overlapped monitor reads -------------------------------------------------
 # ReadFile on a FILE_FLAG_OVERLAPPED HID handle reports ERROR_IO_PENDING for
 # every report that has not arrived yet.  Treating that as a hard failure used
@@ -325,6 +342,92 @@ def test_monitor_read_hard_error_returns_without_waiting(monkeypatch):
     assert calls["wait"] == 0
     assert calls["cancel"] == 0
     assert calls["close_event"] == 1
+
+
+# -- firmware-update (ISP) bootloader ----------------------------------------
+# The shipped update package's own USB descriptor block declares the loader as
+# VID 04D9 / PID 8022 on Usage Page 0xFF00.  A mouse left in that state is
+# alive, so "not found" is misleading; the studio names the actual condition.
+
+class _FakeHidLib:
+    def __init__(self, entries):
+        self._entries = entries
+
+    def enumerate(self):
+        return list(self._entries)
+
+
+def _transport_with(entries):
+    tr = T.HidTransport.__new__(T.HidTransport)
+    tr.demo = False
+    tr.lib = _FakeHidLib(entries)
+    tr.config = SimpleNamespace(vid=0x04D9, pid=0xA09F)
+    return tr
+
+
+def test_bootloader_pid_is_detected():
+    iface = T.HidInterface(
+        path="\\\\?\\hid#boot", vendor_id=0x04D9, product_id=T.BOOTLOADER_PID,
+        usage_page=0xFF00, usage=0x0100,
+        input_length=64, output_length=64, feature_length=0,
+    )
+    assert _transport_with([iface]).bootloader_present() is True
+    assert _transport_with([]).bootloader_present() is False
+    # Another vendor's bootloader PID must not trip the detector.
+    other = T.HidInterface(
+        path="\\\\?\\hid#other", vendor_id=0x1234, product_id=T.BOOTLOADER_PID,
+        usage_page=0xFF00, usage=0x0100,
+        input_length=64, output_length=64, feature_length=0,
+    )
+    assert _transport_with([other]).bootloader_present() is False
+
+
+class _FakeDeviceTransport:
+    demo = False
+
+    def __init__(self, bootloader):
+        self._bootloader = bootloader
+
+    def open(self):
+        return False
+
+    def close(self):
+        pass
+
+    def bootloader_present(self):
+        return self._bootloader
+
+    def enumerate(self):
+        return []
+
+
+def test_connect_explains_firmware_update_mode():
+    from wired.config import DeviceConfig
+    from wired.device import DeviceService, connection_error
+
+    cfg = DeviceConfig()
+    assert "firmware-update mode" in connection_error(cfg, True)
+    assert "8022" in connection_error(cfg, True)
+    assert connection_error(cfg, False).startswith("SM809 not found")
+
+    def _service(bootloader):
+        svc = DeviceService(cfg, None, demo=False,
+                            transport=_FakeDeviceTransport(bootloader))
+        assert svc.connect() is False
+        # DeviceService and its transport hold each other through the event
+        # callbacks.  Break that cycle here: leaving it for the collector is
+        # not useful inside an offline suite.
+        svc.transport.on_event = None
+        svc.transport.on_disconnect = None
+        return svc.last_error, svc.status.bootloader
+
+    message, bootloader = _service(True)
+    assert "firmware-update mode" in message and "8022" in message
+    assert bootloader is True
+
+    message, bootloader = _service(False)
+    assert message.startswith("SM809 not found")
+    assert bootloader is False
 
 
 def test_keys_page_matches_vendor_physical_order():
